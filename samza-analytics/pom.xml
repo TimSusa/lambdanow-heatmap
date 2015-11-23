@@ -122,7 +122,7 @@ under the License.
         <dependency>
             <groupId>com.lambdanow</groupId>
             <artifactId>avro</artifactId>
-            <version>0.1.0-SNAPSHOT</version>
+            <version>0.1.0</version>
         </dependency>
     </dependencies>
 
@@ -152,71 +152,22 @@ under the License.
     </issueManagement>
 
     <repositories>
-        <repository>
-            <id>my-local-repo</id>
-            <url>file://${user.home}/.m2/repository</url>
-        </repository>
-        <repository>
-            <id>apache-releases</id>
-            <url>https://repository.apache.org/content/groups/public</url>
-        </repository>
-        <repository>
-            <id>scala-tools.org</id>
-            <name>Scala-tools Maven2 Repository</name>
-            <url>https://oss.sonatype.org/content/groups/scala-tools</url>
-        </repository>
+	<repository>
+	  <id>lambdanow</id>
+	  <name>LambdaNow</name>
+	  <url>http://artifactory.lambdanow.com/artifactory/libs-release-external/</url>
+	</repository>
     </repositories>
 
-    <pluginRepositories>
-        <pluginRepository>
-            <id>scala-tools.org</id>
-            <name>Scala-tools Maven2 Repository</name>
-            <url>http://scala-tools.org/repo-releases</url>
-        </pluginRepository>
-    </pluginRepositories>
-
     <build>
-        <pluginManagement>
-            <plugins>
-                <plugin>
-                    <groupId>org.apache.rat</groupId>
-                    <artifactId>apache-rat-plugin</artifactId>
-                    <version>0.9</version>
-                    <configuration>
-                        <excludes>
-                            <exclude>*.patch</exclude>
-                            <exclude>**/target/**</exclude>
-                            <exclude>*.json</exclude>
-                            <exclude>.vagrant/**</exclude>
-                            <exclude>.git/**</exclude>
-                            <exclude>*.md</exclude>
-                            <exclude>docs/**</exclude>
-                            <exclude>config/**</exclude>
-                            <exclude>bin/**</exclude>
-                            <exclude>.gitignore</exclude>
-                            <exclude>**/.cache/**</exclude>
-                            <exclude>deploy/**</exclude>
-                            <exclude>**/.project</exclude>
-                            <exclude>**/.gradle/**</exclude>
-                            <exclude>**/gradle/**</exclude>
-                            <exclude>**/gradlew*</exclude>
-                            <exclude>**/build/**</exclude>
-                            <exclude>**/.idea/**</exclude>
-                            <exclude>*.iml</exclude>
-                            <exclude>**/src/main/*.iml</exclude>
-                        </excludes>
-                    </configuration>
-                </plugin>
-            </plugins>
-        </pluginManagement>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.1</version>
                 <configuration>
-                    <source>1.6</source>
-                    <target>1.6</target>
+                    <source>1.8</source>
+                    <target>1.8</target>
                 </configuration>
             </plugin>
             <!-- plugin to build the tar.gz file filled with examples -->
