@@ -13,7 +13,7 @@ job.name=events-processor
 yarn.package.path=hdfs://NAMENODE-NODE-INTERNAL-DNS-NAME:8020/user/ubuntu/lambdanow-analytics-1.0-SNAPSHOT-dist.tar.gz
 
 schema.registry.remote=true
-schema.registry.url=<DATA-NODE-URL>/schemas/
+schema.registry.url=http://<DATA-NODE-INTERNAL-DNS-NAME>:8080/1/schemas/
 schema.registry.token=<DATA-API-TOKEN>
 
 # Serializers
