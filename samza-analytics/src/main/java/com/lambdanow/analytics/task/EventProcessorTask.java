@@ -37,19 +37,30 @@ public class EventProcessorTask  implements StreamTask, InitableTask {
     public void process(IncomingMessageEnvelope envelope, MessageCollector collector, TaskCoordinator coordinator) {
         GenericRecord event = (GenericRecord) envelope.getMessage();
 
+        String actor = event.get("actor") + "i";
+        String action = event.get("action").toString();
+        String object = event.get("object").toString();
+
         BatchPoints batchPoints = BatchPoints.database(influxDbName)
                 .retentionPolicy("default")
                 .consistency(InfluxDB.ConsistencyLevel.ALL)
                 .tag("async", "true")
                 .build();
 
+        /**
+         * Register all fields as tags and fields at the same time.
+         * Not a very good design given that tags are indexed and fields are not.
+         * But this is for demonstration purposes and should suffice
+         */
+
         Point p = Point.measurement("event")
                 .time(System.currentTimeMillis(), TimeUnit.MILLISECONDS)
-                .tag("userId", event.get("userId").toString() + "i")
-                .tag("eventCategory", event.get("eventCategory").toString())
-                .tag("eventAction", event.get("eventAction").toString())
-                .field("eventLabel", event.get("eventLabel").toString() + "i")
-                .field("eventValue", event.get("eventValue"))
+                .tag("actor", actor)
+                .tag("action", action)
+                .tag("object", object)
+                .field("actor", actor)
+                .field("action", action)
+                .field("object", object)
                 .build();
 
         batchPoints.point(p);
