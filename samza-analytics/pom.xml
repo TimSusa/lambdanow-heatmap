@@ -63,6 +63,20 @@ under the License.
             <groupId>org.apache.samza</groupId>
             <artifactId>samza-yarn_2.10</artifactId>
             <version>${samza.version}</version>
+            <exclusions>
+              <exclusion>
+                <groupId>org.apache.hadoop</groupId>
+                <artifactId>hadoop-yarn-common</artifactId>
+              </exclusion>
+              <exclusion>
+                <groupId>org.apache.hadoop</groupId>
+                <artifactId>hadoop-yarn-api</artifactId>
+              </exclusion>
+              <exclusion>
+                <groupId>org.apache.hadoop</groupId>
+                <artifactId>hadoop-yarn-client</artifactId>
+              </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>org.apache.samza</groupId>
@@ -107,7 +121,27 @@ under the License.
         <dependency>
             <groupId>org.apache.hadoop</groupId>
             <artifactId>hadoop-hdfs</artifactId>
-            <version>2.4.0</version>
+            <version>${hadoop.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-common</artifactId>
+            <version>${hadoop.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-yarn-api</artifactId>
+            <version>${hadoop.version}</version>
+        </dependency>
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-yarn-client</artifactId>
+          <version>${hadoop.version}</version>
+        </dependency>
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-yarn-common</artifactId>
+          <version>${hadoop.version}</version>
         </dependency>
         <dependency>
             <groupId>com.google.guava</groupId>
@@ -130,6 +164,7 @@ under the License.
         <!-- maven specific properties -->
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <samza.version>0.9.1</samza.version>
+        <hadoop.version>2.5.0-cdh5.3.0</hadoop.version>
     </properties>
 
     <licenses>
@@ -152,11 +187,15 @@ under the License.
     </issueManagement>
 
     <repositories>
-	<repository>
-	  <id>lambdanow</id>
-	  <name>LambdaNow</name>
-	  <url>http://artifactory.lambdanow.com/artifactory/libs-release-external/</url>
-	</repository>
+        <repository>
+          <id>lambdanow</id>
+          <name>LambdaNow</name>
+          <url>http://artifactory.lambdanow.com/artifactory/libs-release-external/</url>
+        </repository>
+        <repository>
+          <id>cloudera</id>
+          <url>https://repository.cloudera.com/artifactory/cloudera-repos/</url>
+        </repository>
     </repositories>
 
     <build>
