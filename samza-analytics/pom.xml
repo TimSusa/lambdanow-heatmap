@@ -176,14 +176,14 @@ under the License.
     </licenses>
 
     <scm>
-        <connection>scm:git:git://github.com/lambdanow/realtime-analytics.git</connection>
-        <developerConnection>scm:git:git@github.com:lambdanow/realtime-analytics.git</developerConnection>
-        <url>http://github.com/lambdanow/realtime-analytics/</url>
+        <connection>scm:git:git://github.com/lambdanow/lambdanow-examples.git</connection>
+        <developerConnection>scm:git:git@github.com:lambdanow/lambdanow-examples.git</developerConnection>
+        <url>http://github.com/lambdanow/lambdanow-examples/</url>
     </scm>
 
     <issueManagement>
         <system>github</system>
-        <url>http://github.com/lambdanow/realtime-analytics/issues</url>
+        <url>https://github.com/lambdanow/lambdanow-examples/issues</url>
     </issueManagement>
 
     <repositories>
