@@ -64,7 +64,7 @@ public final class AnalyticsCollector {
                 kafka.serializer.StringDecoder.class, kafka.serializer.DefaultDecoder.class, kafkaParams, topicsMap, StorageLevel.MEMORY_ONLY());
 
         //input.print();
-        saveRssIntoInflux(input, decoder, influxClient, influxDbName);
+        saveRddIntoInflux(input, decoder, influxClient, influxDbName);
 
         // start our streaming context and wait for it to "finish"
         jssc.start();
@@ -74,7 +74,7 @@ public final class AnalyticsCollector {
         jssc.stop();
     }
 
-    public static void saveRssIntoInflux(JavaPairDStream<String, byte[]> input, final AvroDecoder decoder, InfluxDB influxClient, String databaseName) {
+    public static void saveRddIntoInflux(JavaPairDStream<String, byte[]> input, final AvroDecoder decoder, InfluxDB influxClient, String databaseName) {
         input.foreachRDD(new Function<JavaPairRDD<String, byte[]>, Void>() {
             @Override
             public Void call(JavaPairRDD<String, byte[]> rdd) throws Exception {
