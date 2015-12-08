@@ -12,7 +12,7 @@ How to use
 		
 3. Upload to your NameNode instance
  
-		$ rsync --partial --progress ./target/lambdanow-sparkanalytics-1.0-SNAPSHOT.jar ubuntu@ec2-54-175-228-0.compute-1.amazonaws.com:~/
+		$ rsync --partial --progress ./target/lambdanow-sparkanalytics-1.0-SNAPSHOT.jar ubuntu@<NAMENODE-PUBLIC-DNS-NAME>:~/
 		
 4. Submit spark job
 	
