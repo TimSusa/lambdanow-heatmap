@@ -1,0 +1,26 @@
+# Task
+task.class=com.lambdanow.sparkanalytics.AnalyticsCollector
+task.inputs=kafka.analytics
+task.influx.host=http://<DATA-NODE-INTERNAL-DNS-NAME>:8086
+task.influx.user=root
+task.influx.pass=root
+task.influx.db=events
+# task.opts=-agentlib:jdwp=transport=dt_socket,address=localhost:9009,server=y,suspend=y
+
+# YARN
+job.factory.class=org.apache.samza.job.yarn.YarnJobFactory
+job.name=events-processor
+yarn.package.path=hdfs://NAMENODE-NODE-INTERNAL-DNS-NAME:8020/user/ubuntu/lambdanow-analytics-1.0-SNAPSHOT-dist.tar.gz
+
+schema.registry.url=http://<DATA-NODE-INTERNAL-DNS-NAME>:8080/1/schemas/
+schema.registry.token=<DATA-API-TOKEN>
+
+# Serializers
+serializers.registry.string.class=org.apache.samza.serializers.StringSerdeFactory
+serializers.registry.avro.class=AvroRecordFactory
+
+systems.kafka.samza.factory=org.apache.samza.system.kafka.KafkaSystemFactory
+systems.kafka.samza.key.serde=string
+systems.kafka.samza.msg.serde=avro
+systems.kafka.consumer.zookeeper.connect=<KAFKA1-NODE-INTERNAL-DNS-NAME>:2181,<KAFKA2-NODE-INTERNAL-DNS-NAME>:2181,<KAFKA3-NODE-INTERNAL-DNS-NAME>:2181
+systems.kafka.producer.bootstrap.servers=<KAFKA1-NODE-INTERNAL-DNS-NAME>:9092,<KAFKA2-NODE-INTERNAL-DNS-NAME>:9092,<KAFKA3-NODE-INTERNAL-DNS-NAME>:9092
