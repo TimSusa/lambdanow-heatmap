@@ -4,8 +4,11 @@ How to use
 1. Checkout from github
 
 		$ git clone git@github.com:LambdaNow/lambdanow-examples.git
-		$ cd lambdanow-examples
-	
+		$ cd lambdanow-examples/spark-analytics/
+		$ cp src/main/resources/application.properties.template src/main/resources/application.properties
+
+2. Use your favorite editor to modify src/main/resources/application.properties by adding your cluster's correct config values. The process is better exampled [in this blog post](http://blog.lambdanow.com/building-an-analytics-service-part2/)
+
 2. Build package
 
 		$ mvn -U clean package
