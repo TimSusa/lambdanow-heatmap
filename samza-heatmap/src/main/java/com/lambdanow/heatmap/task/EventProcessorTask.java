@@ -1,20 +1,11 @@
 package com.lambdanow.heatmap.task;
 
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
 import java.util.*;
 
 import org.apache.avro.generic.GenericRecord;
 import org.apache.commons.lang.builder.EqualsBuilder;
 import org.apache.commons.lang.builder.HashCodeBuilder;
-// import org.apache.samza.config.Config;
-// import org.apache.samza.storage.kv.KeyValueStore;
-// import org.apache.samza.config.Config;
 import org.apache.samza.system.IncomingMessageEnvelope;
-// import org.apache.samza.system.OutgoingMessageEnvelope;
-// import org.apache.samza.system.SystemStream;
 import org.apache.samza.task.*;
 
 final class HeatmapPoint {
@@ -37,7 +28,6 @@ final class Heatmap {
         return new HashCodeBuilder(31, 17). // two randomly chosen prime numbers
             // if deriving: appendSuper(super.hashCode()).
             append(view).
-            // append(userId).
             toHashCode();
     }
 
@@ -52,7 +42,6 @@ final class Heatmap {
         return new EqualsBuilder().
             // if deriving: appendSuper(super.equals(obj)).
             append(view, rhs.view).
-            // append(userId, rhs.userId).
             isEquals();
     }
 }
@@ -94,28 +83,20 @@ final class MyCounts {
     }
 }
 
-// import java.util.concurrent.TimeUnit;
-// public class EventProcessorTask implements StreamTask, InitableTask, WindowableTask {
 public class EventProcessorTask implements StreamTask {
-	  // private int edits = 0;
-	  // private int byteDiff = 0;
-	  // private Set<int> titles = new HashSet<int>();
 	  private Map<MyCounts, Integer> counts = new HashMap<MyCounts, Integer>();
 	  public Heatmaps heatmaps = new Heatmaps();
 	  public Heatmap heatmap = new Heatmap();
 
-	  // private KeyValueStore<String, Integer> store;
-/*
-	  public void init(Config config, TaskContext context) {
-	    this.store = (KeyValueStore<String, Integer>) context.getStore("newheatmapchannel2");
-	  }
-*/
 	  // @SuppressWarnings("unchecked")
 	 @Override
 	    public void process(IncomingMessageEnvelope envelope, MessageCollector collector, TaskCoordinator coordinator) {
 	        GenericRecord event = (GenericRecord) envelope.getMessage();
 	        
 	        String view = event.get("view").toString();
+	        if (view.isEmpty()) {
+	        	view = "landing-page";
+	        }
 	        long timestamp = (long) event.get("timestamp");
 	        int userId = (int) event.get("userId");
 	        
@@ -159,17 +140,6 @@ public class EventProcessorTask implements StreamTask {
 	        // If user is known, update this data grid, otherwise add new one
 	        if ( heatmap.knownUserIds.contains(userId) ) {
 	        	// Extract index
-	        	/*
-	        	Object[] userIdArray = heatmap.knownUserIds.toArray();
-	        	int idx = 0;
-	        	int cnt = 0;
-	        	for(Object tmp: userIdArray){
-	        		if ( (int)tmp == userId ) {
-	        			idx = cnt;
-	        		}
-	        		cnt = cnt + 1;
-	        	}
-	        	*/
 	        	Iterator<Integer> iter = heatmap.knownUserIds.iterator();
 	        	int foundIdx = 0;
 	        	int cntIdx = 0;
@@ -195,54 +165,6 @@ public class EventProcessorTask implements StreamTask {
 	        
 	        // Update set of heatmaps
 	        heatmaps.data.add(heatmap);
-	        System.out.println("Update set of heatmaps with size: " + Integer.toString(heatmaps.data.size()));
-	        	        
-	        // Map<String, Object> edit = (Map<String, Object>) envelope.getMessage();
-	        // Map<String, Boolean> flags = (Map<String, Boolean>) edit.get("flags");
-/*
-	        Integer editsAllTime = store.get("count-edits-all-time");
-	        if (editsAllTime == null) editsAllTime = 0;
-	        store.put("count-edits-all-time", editsAllTime + 1);
-*/
-	        // edits += 1;
-	        // titles.add((String) view);
-	        // byteDiff += (Integer) edit.get("x");
-/*
-	        for (Map.Entry<String, Boolean> flag : flags.entrySet()) {
-	          if (Boolean.TRUE.equals(flag.getValue())) {
-	            Integer count = counts.get(flag.getKey());
-
-	            if (count == null) {
-	              count = 0;
-	            }
-
-	            count += 1;
-	            counts.put(flag.getKey(), count);
-	          }
-	        }	      
-	        */  
-	        
-	        
-
-	        	        
-	        // partitioned by view
-	        // collector.send(countStream, view, newCount);
+	        System.out.println("Update set of heatmaps with size: " + Integer.toString(heatmaps.data.size()));	        	        	       
 	    }
-/*
-	  @Override
-	  public void window(MessageCollector collector, TaskCoordinator coordinator) {
-	    counts.put("edits", edits);
-	    counts.put("bytes-added", byteDiff);
-	    counts.put("unique-titles", titles.size());
-	    counts.put("edits-all-time", store.get("count-edits-all-time"));
-
-	    collector.send(new OutgoingMessageEnvelope(new SystemStream("kafka", "newheatmapchannel2"), counts));
-
-	    // Reset counts after windowing.
-	    edits = 0;
-	    byteDiff = 0;
-	    titles = new HashSet<String>();
-	    counts = new HashMap<String, Integer>();
-	  }
-	  */
 }
