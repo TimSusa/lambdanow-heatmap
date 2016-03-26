@@ -25,6 +25,16 @@
         <!-- filtered=true, so we do variable expansion so the yarn package path
           always points to the correct spot on any machine -->
         <file>
+            <source>${basedir}/src/main/config/analyse.properties</source>
+            <outputDirectory>config</outputDirectory>
+            <filtered>true</filtered>
+        </file>
+        <file>
+            <source>${basedir}/src/main/config/parse.properties</source>
+            <outputDirectory>config</outputDirectory>
+            <filtered>true</filtered>
+        </file>
+        <file>
             <source>${basedir}/src/main/config/analytics.properties</source>
             <outputDirectory>config</outputDirectory>
             <filtered>true</filtered>
