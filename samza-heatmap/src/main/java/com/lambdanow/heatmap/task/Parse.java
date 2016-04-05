@@ -9,7 +9,7 @@ import org.apache.samza.task.StreamTask;
 import org.apache.samza.task.TaskCoordinator;
 
 public class Parse implements StreamTask {
-	  private static final SystemStream OUTPUT_STREAM = new SystemStream("kafka", "pointss");
+	  private static final SystemStream OUTPUT_STREAM = new SystemStream("kafka", "points");
 	  // @SuppressWarnings("unchecked")
 	  @Override
 	  public void process(IncomingMessageEnvelope envelope, MessageCollector collector, TaskCoordinator coordinator) {
@@ -31,7 +31,7 @@ public class Parse implements StreamTask {
         System.out.println("PARSE: " + point);
 	    try {
 	    	
-	      collector.send(new OutgoingMessageEnvelope(OUTPUT_STREAM, point, "1"));
+	      collector.send(new OutgoingMessageEnvelope(OUTPUT_STREAM, point, 1));
 	    } catch (Exception e) {
 	      System.err.println("Unable to parse line: " + event);
 	    }
