@@ -17,11 +17,11 @@ import org.apache.samza.task.TaskCoordinator;
 import org.bson.Document;
 import org.bson.conversions.Bson;
 
-// Mongo Stuff
 import com.mongodb.MongoClient;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.Updates;
+import com.mongodb.client.result.UpdateResult;
 
 
 final class HeatmapPoint {
@@ -155,7 +155,6 @@ public class EventProcessorTask implements StreamTask, InitableTask {
         heatmapPoint.view = view;
         heatmapPoint.hashCode = myCount.hashCode();
              
-        // FIRST APPROACH UPDATE
         // Create db entry for new value,
         // Update otherwise
         if (counts.get(myCount) <= 1) {
@@ -163,33 +162,6 @@ public class EventProcessorTask implements StreamTask, InitableTask {
         } else {
             updateToMongoDb(heatmapPoint);
         }
-      
-/*
-        SECOND APPROACH 
-        // remove old values from mongo db
-        // this.getCollection().drop();
-        this.getCollection().deleteMany(new Document());
-        
-        // iterate through map and insert new points to mongodb
-        Iterator<Map.Entry<MyCounts, Integer>> entries = counts.entrySet().iterator();
-        while (entries.hasNext()) {
-            Map.Entry<MyCounts, Integer> entry = entries.next();
-            
-            // System.out.println("Key = " + entry.getKey() + ", Value = " + entry.getValue());
-            int count = entry.getValue();
-            HeatmapPoint heatmapPoint = new HeatmapPoint();
-            if (pointRateMax == 0) {
-                pointRateMax = 1;
-            }
-            heatmapPoint.x = entry.getKey().x;
-            heatmapPoint.y = entry.getKey().y;
-            heatmapPoint.radius = count * 100 / pointRateMax;
-            heatmapPoint.value = count * 100 / pointRateMax;
-            heatmapPoint.view = entry.getKey().view;
-            // send content to mongo
-            insertToMongoDb(heatmapPoint);
-        }
-        */
     }
 
     private MongoCollection<Document> getCollection() {
@@ -212,30 +184,13 @@ public class EventProcessorTask implements StreamTask, InitableTask {
         
         Bson filter = new Document("hashCode", point.hashCode);
         Bson updateRadius = Updates.set("point.radius", point.radius);
-        this.getCollection().updateOne(filter, updateRadius);
         Bson updateWeight = Updates.set("point.weight", point.value);
-        this.getCollection().updateOne(filter, updateWeight);
-
-        
-                /*
-        Bson filter = new Document("point", "Harish Taware");
-        Bson newValue = new Document("salary", 90000);
-        Bson updateOperationDocument = new Document("$set", newValue);
-        this.getCollection().updateOne(filter, updateOperationDocument);
-        */
-        // this.getCollection().updateOne(and(eq("x", point.x), eq("y", point.y)), new Document("$set", new Document("point.weight", point.value)));
-        // this.getCollection().updateOne(and(eq("view", point.view), eq("x", point.x), eq("y", point.y)), new Document("$set", new Document("point.radius", point.radius)));
-        // mongoClient.close();
-        /*
-        this.getCollection().replaceOne(new Document("restaurant_id", "41704620"),
-        new Document("address",
-                new Document()
-                        .append("street", "2 Avenue")
-                        .append("zipcode", "10075")
-                        .append("building", "1480")
-                        .append("coord", asList(-73.9557413, 40.7720266)))
-                .append("name", "Vella 2"));
-         */
-        System.out.println("point updated");
+        Bson updates = Updates.combine(updateRadius, updateWeight);
+        UpdateResult res = this.getCollection().updateOne(filter, updates);
+        if (res.wasAcknowledged()) {
+            System.out.println("Updating point... acknoledged");
+        } else {
+            System.out.println("Updating point... NOT acknoledged");
+        }
     }
 }
