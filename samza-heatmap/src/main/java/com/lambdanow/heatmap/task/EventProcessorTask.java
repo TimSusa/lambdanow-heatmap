@@ -1,6 +1,8 @@
 package com.lambdanow.heatmap.task;
 
 import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -14,6 +16,7 @@ import org.apache.samza.task.MessageCollector;
 import org.apache.samza.task.StreamTask;
 import org.apache.samza.task.TaskContext;
 import org.apache.samza.task.TaskCoordinator;
+import org.apache.samza.task.WindowableTask;
 import org.bson.Document;
 import org.bson.conversions.Bson;
 
@@ -23,7 +26,6 @@ import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.Updates;
 import com.mongodb.client.result.UpdateResult;
 
-
 final class HeatmapPoint {
     public int radius;
     public int value;
@@ -31,12 +33,22 @@ final class HeatmapPoint {
     public int y;
     public String view;
     public int hashCode;
+
+    public HeatmapPoint(int radius, int value, int x, int y, String view, int hashCode) {
+        this.radius = radius;
+        this.value = value;
+        this.x = x;
+        this.y = y;
+        this.view = view;
+        this.hashCode = hashCode;
+    }
 }
 
-final class MyCounts {
+final class CountPoint {
     public String view;
     public int x;
     public int y;
+    public long timestamp;
 
     /*
      * We have to override that stuff to get containKey to work with this.
@@ -51,20 +63,20 @@ final class MyCounts {
 
     @Override
     public boolean equals(Object obj) {
-        if (!(obj instanceof MyCounts))
+        if (!(obj instanceof CountPoint))
             return false;
         if (obj == this)
             return true;
 
-        MyCounts rhs = (MyCounts) obj;
+        CountPoint rhs = (CountPoint) obj;
         return new EqualsBuilder().
         // if deriving: appendSuper(super.equals(obj)).
                 append(view, rhs.view).append(x, rhs.x).append(y, rhs.y).isEquals();
     }
 }
 
-public class EventProcessorTask implements StreamTask, InitableTask {
-    
+public class EventProcessorTask implements StreamTask, InitableTask, WindowableTask {
+
     private static final String MONGO_HOST = "task.mongo.host";
     private static final String MONGO_PORT = "task.mongo.port";
     private static final String MONGO_DB_NAME = "task.mongo.db";
@@ -73,11 +85,13 @@ public class EventProcessorTask implements StreamTask, InitableTask {
     MongoClient mongoClient;
     MongoDatabase db;
 
-    private Map<MyCounts, Integer> counts = new HashMap<MyCounts, Integer>();
+    private Map<CountPoint, Integer> counts = new HashMap<CountPoint, Integer>();
 
     int xNormMax = 800;
     int yNormMax = 600;
     int pointRateMax = 100;
+    String firstTimestamp = "";
+    long maxTimeDiff = 60; // sec
 
     public void init(Config config, TaskContext context) throws ParseException {
         System.out.println("Init MongoDB");
@@ -85,6 +99,38 @@ public class EventProcessorTask implements StreamTask, InitableTask {
         mongoClient = new MongoClient(config.get(MONGO_HOST), Integer.parseInt(config.get(MONGO_PORT)));
         db = mongoClient.getDatabase(config.get(MONGO_DB_NAME));
         System.out.println("Initialized MongoDB");
+
+        firstTimestamp = new SimpleDateFormat("yyyy.MM.dd.HH.mm.ss").format(new Date());
+    }
+
+    @Override
+    public void window(MessageCollector collector, TaskCoordinator coordinator) {
+        System.out.println("window: --------------------------------------->");
+        for (CountPoint key : counts.keySet()) {
+            
+            String time1 = new SimpleDateFormat("yyyy.MM.dd.HH.mm.ss").format(key.timestamp*1000); // multiply by 1000 to get back unixtimestamp info
+            long timeDiff = calcTimeDiff(firstTimestamp, time1); // past, earlier
+            int minutes = (int)(timeDiff / (1000 * 60 ) % 60);
+            int seconds = (int)(timeDiff / 1000 % 60);
+            int rangeInSeconds = (int)minutes*60+seconds;
+            
+            // System.out.println("diff: " + rangeInSeconds + "sec and prev timestamp " + time1);
+
+            // "Afterglow"
+            if (rangeInSeconds >= maxTimeDiff) {
+                // scale counts to half the rate
+                int newCount = counts.get(key) / 2;
+                counts.put(key, newCount);
+                if (pointRateMax == 0) {
+                    pointRateMax = 1;
+                }
+                int radius = newCount * 100 / pointRateMax;
+                int value = newCount * 100 / pointRateMax;
+                updateToMongoDb(new HeatmapPoint(radius, value, key.x, key.y, key.view, key.hashCode()));
+                
+                System.out.println("Old Point: " + key.x + " / " + key.y + " in view " + key.view + " updated!: " + rangeInSeconds + " and prev timestamp " + time1);
+            }
+        }
     }
 
     @Override
@@ -94,26 +140,27 @@ public class EventProcessorTask implements StreamTask, InitableTask {
 
         String view = event.get("view").toString();
         long timestamp = (long) event.get("timestamp");
-        int userId = (int) event.get("userId");
+        // int userId = (int) event.get("userId");
 
         int x = (int) event.get("x");
         int xMax = (int) event.get("xMax");
         int y = (int) event.get("y");
         int yMax = (int) event.get("yMax");
-
+/*
         System.out.println("");
         System.out.println("-----------------------------------");
         System.out.println("view: " + view);
         System.out.println("timestamp " + timestamp);
-        System.out.println("userId " + userId);
+        
         System.out.println("x " + x);
         System.out.println("xMax " + xMax);
         System.out.println("y " + y);
         System.out.println("yMax " + yMax);
-
+*/
         // Count points
-        MyCounts myCount = new MyCounts();
-        myCount.view = view;
+        CountPoint countPoint = new CountPoint();
+        countPoint.view = view;
+        countPoint.timestamp = timestamp;
 
         // Avoid dividing through zero
         if (xMax == 0) {
@@ -123,41 +170,37 @@ public class EventProcessorTask implements StreamTask, InitableTask {
             yMax = 1;
         }
         // Quantize
-        myCount.x = (x * xNormMax) / xMax;
-        myCount.y = (y * yNormMax) / yMax;
-        
+        countPoint.x = (x * xNormMax) / xMax;
+        countPoint.y = (y * yNormMax) / yMax;
+
         // Count
-        if (counts.containsKey(myCount)) {
-            int newCount = counts.get(myCount) + 1;
-            counts.put(myCount, newCount);
+        if (counts.containsKey(countPoint)) {
+            int newCount = counts.get(countPoint) + 1;
+            counts.put(countPoint, newCount);
 
             // Set local maximum
             if (pointRateMax < newCount) {
                 pointRateMax = newCount;
             }
-            System.out.println("View:  " + myCount.view + " with count=" + newCount + " for specific point: "
-                    + Integer.toString(myCount.x) + "/" + Integer.toString(myCount.y));
+            System.out.println("View:  " + countPoint.view + " with count=" + newCount + " for specific point: "
+                    + Integer.toString(countPoint.x) + "/" + Integer.toString(countPoint.y));
         } else {
-            System.out.println("creating new entry for view: " + myCount.view + " with specific point: " + myCount.x
-                    + "/" + myCount.y);
-            counts.put(myCount, 1);
+            System.out.println("creating new entry for view: " + countPoint.view + " with specific point: " + countPoint.x
+                    + "/" + countPoint.y);
+            counts.put(countPoint, 1);
         }
 
         // Pack and send
-        HeatmapPoint heatmapPoint = new HeatmapPoint();
         if (pointRateMax == 0) {
             pointRateMax = 1;
         }
-        heatmapPoint.x = myCount.x;
-        heatmapPoint.y = myCount.y;
-        heatmapPoint.radius = counts.get(myCount) * 100 / pointRateMax;
-        heatmapPoint.value = counts.get(myCount) * 100 / pointRateMax;
-        heatmapPoint.view = view;
-        heatmapPoint.hashCode = myCount.hashCode();
-             
+        int radius = counts.get(countPoint) * 100 / pointRateMax;
+        int value = counts.get(countPoint) * 100 / pointRateMax;
+
         // Create db entry for new value,
         // Update otherwise
-        if (counts.get(myCount) <= 1) {
+        HeatmapPoint heatmapPoint = new HeatmapPoint(radius, value, countPoint.x, countPoint.y, countPoint.view, countPoint.hashCode());
+        if (counts.get(countPoint) <= 1) {
             insertToMongoDb(heatmapPoint);
         } else {
             updateToMongoDb(heatmapPoint);
@@ -170,18 +213,20 @@ public class EventProcessorTask implements StreamTask, InitableTask {
         }
         return db.getCollection(this.mongoCollection);
     }
-    
+
     private void insertToMongoDb(HeatmapPoint point) {
         System.out.println("insertToMongoDb(): ");
         this.getCollection()
-                .insertOne(new Document("point", new Document().append("view", point.view).append("x", point.x)
-                        .append("y", point.y).append("radius", point.radius).append("weight", point.value)).append("hashCode", point.hashCode));
+                .insertOne(new Document("point",
+                        new Document().append("view", point.view).append("x", point.x).append("y", point.y)
+                                .append("radius", point.radius).append("weight", point.value)).append("hashCode",
+                                        point.hashCode));
         System.out.println("point inserted");
     }
-    
+
     private void updateToMongoDb(HeatmapPoint point) {
         System.out.println("updateToMongoDb(): " + Integer.toString(point.value));
-        
+
         Bson filter = new Document("hashCode", point.hashCode);
         Bson updateRadius = Updates.set("point.radius", point.radius);
         Bson updateWeight = Updates.set("point.weight", point.value);
@@ -192,5 +237,27 @@ public class EventProcessorTask implements StreamTask, InitableTask {
         } else {
             System.out.println("Updating point... NOT acknoledged");
         }
+    }
+
+    private long calcTimeDiff(String time1, String time2) {
+
+        SimpleDateFormat format = new SimpleDateFormat("yyyy.MM.dd.HH.mm.ss");
+        Date date1 = new Date();
+        Date date2 = new Date();
+        try {
+            date1 = format.parse(time1);
+        } catch (ParseException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+
+        try {
+            date2 = format.parse(time2);
+        } catch (ParseException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+
+        return date2.getTime() - date1.getTime();
     }
 }
