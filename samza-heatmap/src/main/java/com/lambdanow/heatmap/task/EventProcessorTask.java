@@ -29,16 +29,16 @@ import com.mongodb.client.result.UpdateResult;
 final class HeatmapPoint {
     public int radius;
     public int value;
-    public int x;
-    public int y;
+    public int xx;
+    public int yy;
     public String view;
     public int hashCode;
 
-    public HeatmapPoint(int radius, int value, int x, int y, String view, int hashCode) {
+    public HeatmapPoint(int radius, int value, int xx, int yy, String view, int hashCode) {
         this.radius = radius;
         this.value = value;
-        this.x = x;
-        this.y = y;
+        this.xx = xx;
+        this.yy = yy;
         this.view = view;
         this.hashCode = hashCode;
     }
@@ -46,8 +46,8 @@ final class HeatmapPoint {
 
 final class CountPoint {
     public String view;
-    public int x;
-    public int y;
+    public int xx;
+    public int yy;
     public long timestamp;
 
     /*
@@ -58,7 +58,7 @@ final class CountPoint {
     public int hashCode() {
         return new HashCodeBuilder(17, 31). // two randomly chosen prime numbers
         // if deriving: appendSuper(super.hashCode()).
-                append(view).append(x).append(y).toHashCode();
+                append(view).append(xx).append(yy).toHashCode();
     }
 
     @Override
@@ -71,7 +71,7 @@ final class CountPoint {
         CountPoint rhs = (CountPoint) obj;
         return new EqualsBuilder().
         // if deriving: appendSuper(super.equals(obj)).
-                append(view, rhs.view).append(x, rhs.x).append(y, rhs.y).isEquals();
+                append(view, rhs.view).append(xx, rhs.xx).append(yy, rhs.yy).isEquals();
     }
 }
 
@@ -106,30 +106,42 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
     @Override
     public void window(MessageCollector collector, TaskCoordinator coordinator) {
         System.out.println("window: --------------------------------------->");
-        for (CountPoint key : counts.keySet()) {
-            
-            String time1 = new SimpleDateFormat("yyyy.MM.dd.HH.mm.ss").format(key.timestamp*1000); // multiply by 1000 to get back unixtimestamp info
-            long timeDiff = calcTimeDiff(firstTimestamp, time1); // past, earlier
-            int minutes = (int)(timeDiff / (1000 * 60 ) % 60);
-            int seconds = (int)(timeDiff / 1000 % 60);
-            int rangeInSeconds = (int)minutes*60+seconds;
-            
-            // System.out.println("diff: " + rangeInSeconds + "sec and prev timestamp " + time1);
+        if (!counts.isEmpty()) {
+            for (CountPoint key : counts.keySet()) {
 
-            // "Afterglow"
-            if (rangeInSeconds >= maxTimeDiff) {
-                // scale counts to half the rate
-                int newCount = counts.get(key) / 2;
-                counts.put(key, newCount);
-                if (pointRateMax == 0) {
-                    pointRateMax = 1;
+                String time1 = new SimpleDateFormat("yyyy.MM.dd.HH.mm.ss").format(key.timestamp * 1000); // multiply by
+                                                                                                         // 1000
+                                                                                                         // to get back
+                                                                                                         // unixtimestamp
+                                                                                                         // info
+                long timeDiff = calcTimeDiff(firstTimestamp, time1); // past, earlier
+                int minutes = (int) (timeDiff / (1000 * 60) % 60);
+                int seconds = (int) (timeDiff / 1000 % 60);
+                int rangeInSeconds = (int) minutes * 60 + seconds;
+
+                // System.out.println("diff: " + rangeInSeconds + "sec and prev timestamp " + time1);
+
+                // "Afterglow"
+                if (rangeInSeconds >= maxTimeDiff) {
+                    // scale counts, reduce the rate
+                    int newCount = counts.get(key) * 3 / 4;
+                    counts.put(key, newCount);
+                    if (pointRateMax == 0) {
+                        pointRateMax = 1;
+                    }
+                    // Avoid old points with radius 1 and val 1
+                    if (newCount == 1) {
+                        newCount = 0;
+                    }
+                    int radius = newCount * 100 / pointRateMax;
+                    int value = newCount * 100 / pointRateMax;
+                    updateToMongoDb(new HeatmapPoint(radius, value, key.xx, key.yy, key.view, key.hashCode()));
+                    System.out.println("Old Point: " + key.xx + " / " + key.yy + " in view " + key.view + " updated!: "
+                            + rangeInSeconds + " and prev timestamp " + time1);
                 }
-                int radius = newCount * 100 / pointRateMax;
-                int value = newCount * 100 / pointRateMax;
-                updateToMongoDb(new HeatmapPoint(radius, value, key.x, key.y, key.view, key.hashCode()));
-                
-                System.out.println("Old Point: " + key.x + " / " + key.y + " in view " + key.view + " updated!: " + rangeInSeconds + " and prev timestamp " + time1);
             }
+        } else {
+            System.out.println("window: ----STORE IS EMPTY!--------------------------->");
         }
     }
 
@@ -149,61 +161,67 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
 /*
         System.out.println("");
         System.out.println("-----------------------------------");
-        System.out.println("view: " + view);
+        System.out.println("view: " + view + " length: " + view.length());
         System.out.println("timestamp " + timestamp);
-        
+
         System.out.println("x " + x);
         System.out.println("xMax " + xMax);
         System.out.println("y " + y);
         System.out.println("yMax " + yMax);
 */
-        // Count points
-        CountPoint countPoint = new CountPoint();
-        countPoint.view = view;
-        countPoint.timestamp = timestamp;
+        // Temp hack: Ignore points not coming from "/"
+        if (view.substring(1).isEmpty()) {
+            System.out.println("--------UPDATE!------------");
 
-        // Avoid dividing through zero
-        if (xMax == 0) {
-            xMax = 1;
-        }
-        if (yMax == 0) {
-            yMax = 1;
-        }
-        // Quantize
-        countPoint.x = (x * xNormMax) / xMax;
-        countPoint.y = (y * yNormMax) / yMax;
+            // Count points
+            CountPoint countPoint = new CountPoint();
+            countPoint.view = view;
+            countPoint.timestamp = timestamp;
 
-        // Count
-        if (counts.containsKey(countPoint)) {
-            int newCount = counts.get(countPoint) + 1;
-            counts.put(countPoint, newCount);
-
-            // Set local maximum
-            if (pointRateMax < newCount) {
-                pointRateMax = newCount;
+            // Avoid dividing through zero
+            if (xMax == 0) {
+                xMax = 1;
             }
-            System.out.println("View:  " + countPoint.view + " with count=" + newCount + " for specific point: "
-                    + Integer.toString(countPoint.x) + "/" + Integer.toString(countPoint.y));
-        } else {
-            System.out.println("creating new entry for view: " + countPoint.view + " with specific point: " + countPoint.x
-                    + "/" + countPoint.y);
-            counts.put(countPoint, 1);
-        }
+            if (yMax == 0) {
+                yMax = 1;
+            }
+            // Quantize
+            countPoint.xx = (x * xNormMax) / xMax;
+            countPoint.yy = (y * yNormMax) / yMax;
 
-        // Pack and send
-        if (pointRateMax == 0) {
-            pointRateMax = 1;
-        }
-        int radius = counts.get(countPoint) * 100 / pointRateMax;
-        int value = counts.get(countPoint) * 100 / pointRateMax;
+            // Count
+            if (counts.containsKey(countPoint)) {
+                int newCount = counts.get(countPoint) + 1;
+                counts.put(countPoint, newCount);
 
-        // Create db entry for new value,
-        // Update otherwise
-        HeatmapPoint heatmapPoint = new HeatmapPoint(radius, value, countPoint.x, countPoint.y, countPoint.view, countPoint.hashCode());
-        if (counts.get(countPoint) <= 1) {
-            insertToMongoDb(heatmapPoint);
-        } else {
-            updateToMongoDb(heatmapPoint);
+                // Set local maximum
+                if (pointRateMax < newCount) {
+                    pointRateMax = newCount;
+                }
+                System.out.println("View:  " + countPoint.view + " with count=" + newCount + " for specific point: "
+                        + Integer.toString(countPoint.xx) + "/" + Integer.toString(countPoint.yy));
+            } else {
+                System.out.println("creating new entry for view: " + countPoint.view + " with specific point: "
+                        + countPoint.xx + "/" + countPoint.yy);
+                counts.put(countPoint, 1);
+            }
+
+            // Pack and send
+            if (pointRateMax == 0) {
+                pointRateMax = 1;
+            }
+            int radius = counts.get(countPoint) * 100 / pointRateMax;
+            int value = counts.get(countPoint) * 100 / pointRateMax;
+
+            // Create db entry for new value,
+            // Update otherwise
+            HeatmapPoint heatmapPoint = new HeatmapPoint(radius, value, countPoint.xx, countPoint.yy, countPoint.view,
+                    countPoint.hashCode());
+            if (counts.get(countPoint) <= 1) {
+                insertToMongoDb(heatmapPoint);
+            } else {
+                updateToMongoDb(heatmapPoint);
+            }
         }
     }
 
@@ -218,7 +236,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         System.out.println("insertToMongoDb(): ");
         this.getCollection()
                 .insertOne(new Document("point",
-                        new Document().append("view", point.view).append("x", point.x).append("y", point.y)
+                        new Document().append("view", point.view).append("x", point.xx).append("y", point.yy)
                                 .append("radius", point.radius).append("weight", point.value)).append("hashCode",
                                         point.hashCode));
         System.out.println("point inserted");
