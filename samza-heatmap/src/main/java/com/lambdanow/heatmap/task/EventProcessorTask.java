@@ -122,12 +122,12 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         if (!counts.isEmpty()) {
             for (CountPoint key : counts.keySet()) {
                 long timeDiff = (long) key.timestamp - firstTimestamp;
-                // System.out.println("diff: " + timeDiff + "sec and prev timestamp ");
 
                 // "Afterglow"
                 if (timeDiff >= maxTimeDiff) {
                     // scale counts, reduce the rate
-                    int newCount = (int)(counts.get(key) * 0.75 );
+                    //int newCount = (int)(counts.get(key) * 0.75 );
+                    int newCount = counts.get(key) / 2;
                     
                     key.timestamp = System.currentTimeMillis();
                     counts.put(key, newCount);
