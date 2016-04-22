@@ -101,12 +101,13 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
     MongoDatabase db;
 
     private Map<CountPoint, Integer> counts = new HashMap<CountPoint, Integer>();
-    private List<WriteModel<Document>> bulkUpdates = Arrays.<WriteModel<Document>>asList();
+    private List<WriteModel<Document>> bulkUpdates = Arrays.<WriteModel<Document>> asList();
 
     private static int xNormMax = 800;
     private static int yNormMax = 600;
     int pointRateMax = 100;
     long firstTimestamp = 0;
+    long lastAfterglowTimestamp = 0;
     private static long maxTimeDiffAfterglow = 60000; // milisec
 
     /**
@@ -121,6 +122,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         System.out.println("Initialized MongoDB");
 
         firstTimestamp = System.currentTimeMillis();
+        lastAfterglowTimestamp = firstTimestamp;
     }
 
     @Override
@@ -132,11 +134,12 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
             //
             // "Afterglow": ( as maxTimeDiffAfterglow )
             //
-            long afterglowTimeDiff = firstTimestamp - System.currentTimeMillis();
+            long afterglowTimeDiff = System.currentTimeMillis() - lastAfterglowTimestamp;
             if (afterglowTimeDiff >= maxTimeDiffAfterglow) {
                 this.afterglowUpdatePoints();
+                lastAfterglowTimestamp = System.currentTimeMillis();
             }
-            
+
             ///
             // Bulk Write (as window frequeny)
             //
@@ -195,24 +198,8 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
                 if (pointRateMax == 0) {
                     pointRateMax = 1;
                 }
-
-                // int radius = counts.get(countPoint) * 100 / pointRateMax;
-                // int value = counts.get(countPoint) * 100 / pointRateMax;
-
-                /*
-                 * updateToMongoDb(new HeatmapPoint(radius, value, countPoint.xx, countPoint.yy, countPoint.view,
-                 * countPoint.hashCode()));
-                 * 
-                 * System.out.println("View:  " + countPoint.view + " with count=" + newCount + " for specific point: "
-                 * + Integer.toString(countPoint.xx) + "/" + Integer.toString(countPoint.yy));
-                 */
             } else {
                 counts.put(countPoint, 1);
-                /*
-                 * insertToMongoDb( new HeatmapPoint(1, 1, countPoint.xx, countPoint.yy, countPoint.view,
-                 * countPoint.hashCode())); System.out.println("creating new entry for view: " + countPoint.view +
-                 * " with specific point: " + countPoint.xx + "/" + countPoint.yy);
-                 */
             }
         }
     }
@@ -293,18 +280,8 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
                 if (pointRateMax == 0) {
                     pointRateMax = 1;
                 }
-                // Avoid old points with radius 1 and val 1
-                /*
-                 * if (newCount == 1) { newCount = 0; }
-                 */
-
-                // int radius = newCount * 100 / pointRateMax;
-                // int value = newCount * 100 / pointRateMax;
-                // HeatmapPoint hmp = new HeatmapPoint(radius, value, key.xx, key.yy, key.view, key.hashCode());
-                // updateToMongoDb(hmp);
-
-                System.out.println(
-                        "afterglowUpdatePoints(): Old Point: " + key.xx + " / " + key.yy + " in view " + key.view + " updated! " + timeDiff);
+                System.out.println("afterglowUpdatePoints(): Old Point: " + key.xx + " / " + key.yy + " in view "
+                        + key.view + " updated! " + timeDiff);
             }
         }
     }
