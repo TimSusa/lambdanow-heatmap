@@ -101,7 +101,6 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
     MongoDatabase db;
 
     private Map<CountPoint, Integer> counts = new HashMap<CountPoint, Integer>();
-    private List<WriteModel<Document>> bulkUpdates = Arrays.<WriteModel<Document>> asList();
 
     private static int xNormMax = 800;
     private static int yNormMax = 600;
@@ -137,15 +136,21 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
             long afterglowTimeDiff = System.currentTimeMillis() - lastAfterglowTimestamp;
             if (afterglowTimeDiff >= maxTimeDiffAfterglow) {
                 this.afterglowUpdatePoints();
-                lastAfterglowTimestamp = System.currentTimeMillis();
             }
 
             ///
             // Bulk Write (as window frequeny)
             //
-            this.dropMongoCollection();
-            this.insertPointsToMongoDb();
-            // this.upsertBulkToMongoDb();
+            // this.insertPointsToMongoDb();
+            this.upsertBulkToMongoDb();
+            
+            ///
+            // clean up
+            //
+            if (afterglowTimeDiff >= maxTimeDiffAfterglow) {
+                this.deleteZeroValues();
+                lastAfterglowTimestamp = System.currentTimeMillis();
+            }
         }
     }
 
@@ -187,7 +192,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
 
             // Count
             if (counts.containsKey(countPoint)) {
-                int newCount = counts.get(countPoint) + 1;
+                int newCount = (int)counts.get(countPoint) + 1;
                 counts.put(countPoint, newCount);
 
                 // Set local maximum
@@ -204,31 +209,30 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         }
     }
 
-    // http://stackoverflow.com/questions/31470702/bulk-upsert-with-mongodb-java-3-0-driver
-    private void addToUpsertList(HeatmapPoint point) {
-
-        Bson filter = new Document("hashCode", point.hashCode);
-        Bson update = Updates.set("point", point);
-        // Bson updateWeight = Updates.set("point.weight", point.value);
-        // Bson updates = Updates.combine(updateRadius, updateWeight);
-
-        UpdateOneModel<Document> uom = new UpdateOneModel<Document>(filter, // filter part
-                update, // update part
-                new UpdateOptions().upsert(true) // options like upsert
-        );
-        bulkUpdates.add(uom);
-    }
-
     private void upsertBulkToMongoDb() {
         System.out.println("upsertBulkToMongoDb():");
+        if (pointRateMax == 0) {
+            pointRateMax = 1;
+        }
+        // Prepare upsert blob
         if (!counts.isEmpty()) {
+            List<WriteModel<Document>> bulkUpdates = new ArrayList<WriteModel<Document>>();
             for (CountPoint key : counts.keySet()) {
-                int newCount = counts.get(key);
-                int radius = newCount * 100 / pointRateMax;
-                int value = newCount * 100 / pointRateMax;
-                HeatmapPoint hmp = new HeatmapPoint(radius, value, key.xx, key.yy, key.view, key.hashCode());
-                this.addToUpsertList(hmp);
+                int newCount = (int)counts.get(key);
+                int radius = (newCount * 100) / pointRateMax;
+                int value = (newCount * 100) / pointRateMax;
+                HeatmapPoint hmp = new HeatmapPoint((int)radius, (int)value, (int)key.xx, (int)key.yy, key.view, (int)key.hashCode());
+                bulkUpdates.add(
+                        new UpdateOneModel<Document>(
+                            new Document("_id", key.hashCode()),  // filter part, hashCode
+                            new Document("$set", getDocFromPoint(hmp)),           // update part
+                            new UpdateOptions().upsert(true)
+                        )
+                    );
             }
+            
+            //
+            // Bulk Write
             if (!bulkUpdates.isEmpty()) {
                 BulkWriteResult bulkWriteResult = this.getCollection().bulkWrite(bulkUpdates);
                 if (!bulkWriteResult.wasAcknowledged()) {
@@ -237,19 +241,21 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
                     System.out.println("upsertBulkToMongoDb(): acknoledged. Clear update cache");
                     bulkUpdates.clear();
                 }
-            } else {
-                System.out.println("upsertBulkToMongoDb(): bulkUpdates EMPTY!");
-            }
+            } 
         }
     }
 
     private void insertPointsToMongoDb() {
+        this.dropMongoCollection();
+        if (pointRateMax == 0) {
+            pointRateMax = 1;
+        }
         if (!counts.isEmpty()) {
             List<Document> docList = new ArrayList<Document>();
             for (CountPoint key : counts.keySet()) {
-                int newCount = counts.get(key);
-                int radius = newCount * 100 / pointRateMax;
-                int value = newCount * 100 / pointRateMax;
+                int newCount = (int)counts.get(key);
+                int radius = (newCount * 100) / pointRateMax;
+                int value = (newCount * 100) / pointRateMax;
                 HeatmapPoint hmp = new HeatmapPoint(radius, value, key.xx, key.yy, key.view, key.hashCode());
                 docList.add(getDocFromPoint(hmp));
             }
@@ -261,18 +267,14 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         }
     }
 
-    /*
-     * deleteMany DeleteResult deleteMany(Bson filter) Removes all documents from the collection that match the given
-     * query filter. If no documents match, the collection is not modified
-     */
     private void afterglowUpdatePoints() {
         System.out.println("afterglowUpdatePoints()");
         for (CountPoint key : counts.keySet()) {
             long timeDiff = (long) key.timestamp - firstTimestamp;
             if (timeDiff >= maxTimeDiffAfterglow) {
                 // scale counts, reduce the rate
-                // int newCount = (int)(counts.get(key) * 0.75 );
-                int newCount = counts.get(key) / 2;
+                //int newCount = (int)(counts.get(key) * 0.75 );
+                int newCount = (int)counts.get(key) / 2;
 
                 key.timestamp = System.currentTimeMillis();
                 counts.put(key, newCount);
@@ -303,6 +305,14 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
     private void dropMongoCollection() {
         System.out.println("dropMongoCollection()");
         this.getCollection().drop();
+    }
+    
+    private void deleteZeroValues(){
+        System.out.println("deleteZeroValues():");
+        Bson filter = new Document("point.radius", 0);
+        this.getCollection().deleteMany(filter);
+        filter = new Document("point.weight", 0);
+        this.getCollection().deleteMany(filter);
     }
     // // DEPRECATED
     // private void updateToMongoDb(HeatmapPoint point) {
