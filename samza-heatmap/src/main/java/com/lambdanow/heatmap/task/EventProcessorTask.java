@@ -156,7 +156,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         int yyMax = (int) event.get("yMax");
 
         // Temp hack: Ignore points not coming from "/"
-        if (view.substring(1).isEmpty()) {
+        if (view.trim().equals("/")) {
 
             System.out.println("-----------------------------------");
             System.out.println("timestamp " + timestamp);
@@ -211,10 +211,10 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
 
             for (CountPoint key : counts.keySet()) {
                 int newCount = (int) counts.get(key);
+                int radius = (newCount * 100) / pointRateMax;
+                int value = (newCount * 100) / pointRateMax;
                 // Upsert or delete
-                if (newCount != 0) {
-                    int radius = (newCount * 100) / pointRateMax;
-                    int value = (newCount * 100) / pointRateMax;
+                if (radius != 0) {
                     HeatmapPoint hmp = new HeatmapPoint(radius, value, key.xx, key.yy, key.view,key.hashCode());
                     bulkUpdates.add(new UpdateOneModel<Document>(new Document("_id", key.hashCode()),
                             new Document("$set", getDocFromPoint(hmp)), new UpdateOptions().upsert(true)));
@@ -233,6 +233,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
                 } else {
                     System.out.println("upsertBulkToMongoDb(): acknoledged. Clear update cache");
                     bulkUpdates.clear();
+                    bulkDeletes.clear();
                 }
             }
         }
@@ -245,7 +246,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
             if (timeDiff >= maxTimeDiffAfterglow) {
                 // scale counts, reduce the rate
                 int val = (int) counts.get(cp);
-                int newCount = val - (val / 4);
+                int newCount = val - (val / 3);
                 cp.timestamp = System.currentTimeMillis();
                 counts.put(cp, newCount);
             }
