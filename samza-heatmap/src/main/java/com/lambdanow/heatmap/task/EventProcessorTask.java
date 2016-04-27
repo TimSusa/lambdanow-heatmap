@@ -144,7 +144,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
             }
 
             ///
-            // Bulk Write (as window frequeny)
+            // Bulk Write (as window frequency)
             //
             this.upsertBulkToMongoDb();
         }
@@ -250,7 +250,8 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
                 // scale counts, reduce the rate
                 int val = (int) counts.get(cp);
                 int newCount = (val != 1) ? (val - (val / 3)) : 0;
-                cp.timestamp = timestampNow;
+                newCount = (val == 2) ? 1 : newCount;
+                // cp.timestamp = timestampNow;
                 counts.put(cp, newCount);
             }
         }
