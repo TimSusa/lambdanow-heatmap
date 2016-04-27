@@ -1,7 +1,7 @@
 package com.lambdanow.heatmap.task;
 
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,9 +24,9 @@ import com.mongodb.MongoClient;
 import com.mongodb.bulk.BulkWriteResult;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.DeleteManyModel;
 import com.mongodb.client.model.UpdateOneModel;
 import com.mongodb.client.model.UpdateOptions;
-import com.mongodb.client.model.Updates;
 import com.mongodb.client.model.WriteModel;
 
 final class HeatmapPoint {
@@ -136,6 +136,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
             long afterglowTimeDiff = System.currentTimeMillis() - lastAfterglowTimestamp;
             if (afterglowTimeDiff >= maxTimeDiffAfterglow) {
                 this.afterglowUpdatePoints();
+                lastAfterglowTimestamp = System.currentTimeMillis();
             }
 
             ///
@@ -147,10 +148,10 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
             ///
             // clean up
             //
-            if (afterglowTimeDiff >= maxTimeDiffAfterglow) {
-                this.deleteZeroValues();
-                lastAfterglowTimestamp = System.currentTimeMillis();
-            }
+//            if (afterglowTimeDiff >= maxTimeDiffAfterglow) {
+//                this.deleteZeroValues();
+//                lastAfterglowTimestamp = System.currentTimeMillis();
+//            }
         }
     }
 
@@ -217,22 +218,34 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         // Prepare upsert blob
         if (!counts.isEmpty()) {
             List<WriteModel<Document>> bulkUpdates = new ArrayList<WriteModel<Document>>();
+            List<WriteModel<Document>> deletes = new ArrayList<WriteModel<Document>>();
+            
             for (CountPoint key : counts.keySet()) {
                 int newCount = (int)counts.get(key);
-                int radius = (newCount * 100) / pointRateMax;
-                int value = (newCount * 100) / pointRateMax;
-                HeatmapPoint hmp = new HeatmapPoint((int)radius, (int)value, (int)key.xx, (int)key.yy, key.view, (int)key.hashCode());
-                bulkUpdates.add(
-                        new UpdateOneModel<Document>(
-                            new Document("_id", key.hashCode()),  // filter part, hashCode
-                            new Document("$set", getDocFromPoint(hmp)),           // update part
-                            new UpdateOptions().upsert(true)
-                        )
-                    );
+                // Upsert or delete
+                if (newCount != 0) {
+                    int radius = (newCount * 100) / pointRateMax;
+                    int value = (newCount * 100) / pointRateMax;
+                    HeatmapPoint hmp = new HeatmapPoint((int)radius, (int)value, (int)key.xx, (int)key.yy, key.view, (int)key.hashCode());
+                    bulkUpdates.add(
+                            new UpdateOneModel<Document>(
+                                new Document("_id", key.hashCode()),  // filter part, hashCode
+                                new Document("$set", getDocFromPoint(hmp)),           // update part
+                                new UpdateOptions().upsert(true)
+                            )
+                        );
+                } else {
+                    deletes.add(
+                            new DeleteManyModel<Document>(
+                                new Document("_id", key.hashCode())
+                            )
+                        );
+                }
             }
             
             //
-            // Bulk Write
+            // Bulk Update
+            bulkUpdates.addAll(deletes);
             if (!bulkUpdates.isEmpty()) {
                 BulkWriteResult bulkWriteResult = this.getCollection().bulkWrite(bulkUpdates);
                 if (!bulkWriteResult.wasAcknowledged()) {
@@ -243,6 +256,72 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
                 }
             } 
         }
+    }
+
+    private void afterglowUpdatePoints() {
+        System.out.println("afterglowUpdatePoints()");
+        
+//        Iterator<CountPoint> it = counts.keySet().iterator();
+//        while (it.hasNext()) {
+//            CountPoint cp = it.next();
+//            int count = (int)counts.get(cp);
+//            
+//            System.out.println(cp.view + " = count: " + count);
+//            long timeDiff = (long) cp.timestamp - firstTimestamp;
+//            if (timeDiff >= maxTimeDiffAfterglow) {
+//                // scale counts, reduce the rate
+//                int newCount = (int)(count / 2); // count - (count / 4);
+//
+//                // Clean update hash map
+//                // remove if count is zero
+//                if ( newCount == 0 ) {
+//                    System.out.println("afterglowUpdatePoints: remove");
+//                    it.remove();
+//                } else {
+//                    cp.timestamp = System.currentTimeMillis();
+//                    counts.put(cp, newCount);
+//                }
+//                
+//                if (pointRateMax == 0) {
+//                    pointRateMax = 1;
+//                }
+//                System.out.println("afterglowUpdatePoints(): Old Point: " + cp.xx + " / " + cp.yy + " in view "
+//                        + cp.view + " updated! " + timeDiff);
+//            }
+//        }
+        
+        for (CountPoint cp : counts.keySet()) {
+            long timeDiff = (long) cp.timestamp - firstTimestamp;
+            if (timeDiff >= maxTimeDiffAfterglow) {
+                // scale counts, reduce the rate
+                int val = (int)counts.get(cp);
+                int newCount = (int)(val / 2) ; // val - (val / 4);
+                    cp.timestamp = System.currentTimeMillis();
+                    counts.put(cp, newCount);
+                    System.out.println("afterglowUpdatePoints(): Old Point: " + cp.xx + " / " + cp.yy + " in view "
+                            + cp.view + " updated! " + timeDiff);
+                if (pointRateMax == 0) {
+                    pointRateMax = 1;
+                }
+
+            }
+        }
+        
+        
+    }
+
+    private MongoCollection<Document> getCollection() {
+        if (mongoCollection.isEmpty()) {
+            System.out.println("ERROR: Mongocollection name is empty!");
+        }
+        return db.getCollection(this.mongoCollection);
+    }
+
+    private Document getDocFromPoint(HeatmapPoint point) {
+        return new Document("point",
+                new Document().append("view", point.view).append("x", point.xx).append("y", point.yy)
+                        .append("radius", point.radius).append("weight", point.value)).append("hashCode",
+                                point.hashCode);
     }
 
     private void insertPointsToMongoDb() {
@@ -266,42 +345,6 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
             System.out.println("insertPointsToMongoDb(): List is empty");
         }
     }
-
-    private void afterglowUpdatePoints() {
-        System.out.println("afterglowUpdatePoints()");
-        for (CountPoint key : counts.keySet()) {
-            long timeDiff = (long) key.timestamp - firstTimestamp;
-            if (timeDiff >= maxTimeDiffAfterglow) {
-                // scale counts, reduce the rate
-                //int newCount = (int)(counts.get(key) * 0.75 );
-                int newCount = (int)counts.get(key) / 2;
-
-                key.timestamp = System.currentTimeMillis();
-                counts.put(key, newCount);
-
-                if (pointRateMax == 0) {
-                    pointRateMax = 1;
-                }
-                System.out.println("afterglowUpdatePoints(): Old Point: " + key.xx + " / " + key.yy + " in view "
-                        + key.view + " updated! " + timeDiff);
-            }
-        }
-    }
-
-    private MongoCollection<Document> getCollection() {
-        if (mongoCollection.isEmpty()) {
-            System.out.println("ERROR: Mongocollection name is empty!");
-        }
-        return db.getCollection(this.mongoCollection);
-    }
-
-    private Document getDocFromPoint(HeatmapPoint point) {
-        return new Document("point",
-                new Document().append("view", point.view).append("x", point.xx).append("y", point.yy)
-                        .append("radius", point.radius).append("weight", point.value)).append("hashCode",
-                                point.hashCode);
-    }
-
     private void dropMongoCollection() {
         System.out.println("dropMongoCollection()");
         this.getCollection().drop();
@@ -314,32 +357,4 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         filter = new Document("point.weight", 0);
         this.getCollection().deleteMany(filter);
     }
-    // // DEPRECATED
-    // private void updateToMongoDb(HeatmapPoint point) {
-    // // System.out.println("updateToMongoDb(): " + Integer.toString(point.value));
-    //
-    // Bson filter = new Document("hashCode", point.hashCode);
-    // Bson updateRadius = Updates.set("point.radius", point.radius);
-    // Bson updateWeight = Updates.set("point.weight", point.value);
-    // Bson updates = Updates.combine(updateRadius, updateWeight);
-    // UpdateResult res = this.getCollection().updateOne(filter, updates);
-    // // UpdateOptions options = new UpdateOptions().upsert(true)
-    //
-    // if (res.wasAcknowledged()) {
-    // System.out.println("Updating point... acknoledged");
-    // } else {
-    // System.out.println("Updating point... NOT acknoledged");
-    // }
-    // }
-    //
-    // // DEPRECATED
-    // private void insertToMongoDb(HeatmapPoint point) {
-    // System.out.println("insertToMongoDb(): ");
-    // this.getCollection()
-    // .insertOne(new Document("point",
-    // new Document().append("view", point.view).append("x", point.xx).append("y", point.yy)
-    // .append("radius", point.radius).append("weight", point.value)).append("hashCode",
-    // point.hashCode));
-    // System.out.println("point inserted");
-    // }
 }
