@@ -94,30 +94,37 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
     private static final String MONGO_PORT = "task.mongo.port";
     private static final String MONGO_DB_NAME = "task.mongo.db";
     private static final String MONGO_COLLECTION = "task.mongo.collection";
+    private static final String AFTERGLOW = "task.afterglow.ms";
+    private static final String X_NORM_MAX = "task.x.norm.max";
+    private static final String Y_NORM_MAX = "task.y.norm.max";
+    private static final String POINT_RATE_MAX = "task.point.rate.max";
+    
     private String mongoCollection = "";
-    MongoClient mongoClient;
-    MongoDatabase db;
+    private MongoClient mongoClient;
+    private MongoDatabase db;
+
+    private long maxTimeDiffAfterglow;
+    private int xNormMax;
+    private int yNormMax;
+    private int pointRateMax;
+    private long firstTimestamp;
+    private long lastAfterglowTimestamp;
 
     private Map<CountPoint, Integer> counts = new HashMap<CountPoint, Integer>();
-
-    private static int xNormMax = 800;
-    private static int yNormMax = 600;
-    int pointRateMax = 100;
-    long firstTimestamp = 0;
-    long lastAfterglowTimestamp = 0;
-    private static long maxTimeDiffAfterglow = 60000; // milisec
-
+    
     /**
      * init.
      * 
      */
     public void init(Config config, TaskContext context) {
-        System.out.println("Init MongoDB");
+        System.out.println("Init");
         mongoCollection = config.get(MONGO_COLLECTION);
         mongoClient = new MongoClient(config.get(MONGO_HOST), Integer.parseInt(config.get(MONGO_PORT)));
         db = mongoClient.getDatabase(config.get(MONGO_DB_NAME));
-        System.out.println("Initialized MongoDB");
-
+        maxTimeDiffAfterglow = Long.valueOf(config.get(AFTERGLOW)).longValue();
+        xNormMax = Integer.parseInt(config.get(X_NORM_MAX));
+        yNormMax = Integer.parseInt(config.get(Y_NORM_MAX));
+        pointRateMax = Integer.parseInt(config.get(POINT_RATE_MAX));
         firstTimestamp = System.currentTimeMillis();
         lastAfterglowTimestamp = firstTimestamp;
     }
@@ -125,7 +132,6 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
     @Override
     public void window(MessageCollector collector, TaskCoordinator coordinator) {
 
-        // System.out.println("window: --------------------------------------->");
         if (!counts.isEmpty()) {
 
             //
@@ -158,12 +164,12 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         // Temp hack: Ignore points not coming from "/"
         if (view.trim().equals("/")) {
 
-            System.out.println("-----------------------------------");
-            System.out.println("timestamp " + timestamp);
-            System.out.println("x " + xx);
-            System.out.println("xMax " + xxMax);
-            System.out.println("y " + yy);
-            System.out.println("yMax " + yyMax);
+//            System.out.println("-----------------------------------");
+//            System.out.println("timestamp " + timestamp);
+//            System.out.println("x " + xx);
+//            System.out.println("xMax " + xxMax);
+//            System.out.println("y " + yy);
+//            System.out.println("yMax " + yyMax);
 
             // Avoid dividing through zero
             if (xxMax == 0) {
@@ -190,9 +196,6 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
                     pointRateMax = newCount;
                 }
 
-                if (pointRateMax == 0) {
-                    pointRateMax = 1;
-                }
             } else {
                 counts.put(countPoint, 1);
             }
@@ -200,7 +203,6 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
     }
 
     private void upsertBulkToMongoDb() {
-        System.out.println("upsertBulkToMongoDb():");
         if (pointRateMax == 0) {
             pointRateMax = 1;
         }
@@ -241,13 +243,14 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
 
     private void afterglowUpdatePoints() {
         System.out.println("afterglowUpdatePoints()");
+        long timestampNow = System.currentTimeMillis();
         for (CountPoint cp : counts.keySet()) {
-            long timeDiff = (long) cp.timestamp - firstTimestamp;
+            long timeDiff = timestampNow - (long) cp.timestamp;
             if (timeDiff >= maxTimeDiffAfterglow) {
                 // scale counts, reduce the rate
                 int val = (int) counts.get(cp);
-                int newCount = val - (val / 3);
-                cp.timestamp = System.currentTimeMillis();
+                int newCount = (val != 1) ? (val - (val / 3)) : 0;
+                cp.timestamp = timestampNow;
                 counts.put(cp, newCount);
             }
         }
