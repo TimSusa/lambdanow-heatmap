@@ -251,7 +251,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
                 int val = (int) counts.get(cp);
                 int newCount = (val != 1) ? (val - (val / 3)) : 0;
                 newCount = (val == 2) ? 1 : newCount;
-                // cp.timestamp = timestampNow;
+                cp.timestamp = timestampNow;
                 counts.put(cp, newCount);
             }
         }
