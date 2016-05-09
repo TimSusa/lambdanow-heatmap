@@ -214,7 +214,16 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
             for (CountPoint key : counts.keySet()) {
                 int newCount = (int) counts.get(key);
                 int radius = (newCount * 100) / pointRateMax;
+                
+                // clip
+                if (radius > 100){
+                    radius = 100;
+                }
+                
                 int value = (newCount * 100) / pointRateMax;
+                if (value > 100){
+                    value = 100;
+                }
                 // Upsert or delete
                 if (radius != 0) {
                     HeatmapPoint hmp = new HeatmapPoint(radius, value, key.xx, key.yy, key.view,key.hashCode());
