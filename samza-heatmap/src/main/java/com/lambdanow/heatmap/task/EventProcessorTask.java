@@ -27,12 +27,24 @@ import com.mongodb.client.model.UpdateOneModel;
 import com.mongodb.client.model.UpdateOptions;
 import com.mongodb.client.model.WriteModel;
 
+/**
+ * Class HeatmapPoint.
+ * 
+ * @author timsusa
+ *
+ */
 final class HeatmapPoint {
+
     public int radius;
+
     public int value;
+
     public int xx;
+
     public int yy;
+
     public String view;
+
     public int hashCode;
 
     public HeatmapPoint(int radius, int value, int xx, int yy, String view, int hashCode) {
@@ -45,6 +57,12 @@ final class HeatmapPoint {
     }
 }
 
+/**
+ * Class CountPoint.
+ * 
+ * @author timsusa
+ *
+ */
 final class CountPoint {
     public String view;
     public int xx;
@@ -58,10 +76,6 @@ final class CountPoint {
         this.timestamp = timestamp;
     }
 
-    /*
-     * We have to override that stuff to get containKey to work with this.
-     * 
-     */
     @Override
     public int hashCode() {
         return new HashCodeBuilder(17, 31). // two randomly chosen prime numbers
@@ -85,8 +99,10 @@ final class CountPoint {
 }
 
 /**
- * EventProcessorTask.
+ * Class EventProcessorTask.
  * 
+ * @author timsusa
+ *
  */
 public class EventProcessorTask implements StreamTask, InitableTask, WindowableTask {
 
@@ -113,15 +129,18 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
 
     private Map<CountPoint, Integer> counts = new HashMap<CountPoint, Integer>();
 
-    /**
-     * init.
+    /*
+     * (non-Javadoc)
      * 
+     * @see org.apache.samza.task.InitableTask#init(org.apache.samza.config.Config, org.apache.samza.task.TaskContext)
      */
     public void init(Config config, TaskContext context) {
         System.out.println("Init");
+
         mongoCollection = config.get(MONGO_COLLECTION);
         mongoClient = new MongoClient(config.get(MONGO_HOST), Integer.parseInt(config.get(MONGO_PORT)));
         db = mongoClient.getDatabase(config.get(MONGO_DB_NAME));
+
         maxTimeDiffAfterglow = Long.valueOf(config.get(AFTERGLOW)).longValue();
         xNormMax = Integer.parseInt(config.get(X_NORM_MAX));
         yNormMax = Integer.parseInt(config.get(Y_NORM_MAX));
@@ -131,27 +150,35 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         lastAfterglowTimestamp = firstTimestamp;
     }
 
+    /*
+     * (non-Javadoc)
+     * 
+     * @see org.apache.samza.task.WindowableTask#window(org.apache.samza.task.MessageCollector,
+     * org.apache.samza.task.TaskCoordinator)
+     */
     @Override
     public void window(MessageCollector collector, TaskCoordinator coordinator) {
 
         if (!counts.isEmpty()) {
 
-            //
             // "Afterglow": ( as maxTimeDiffAfterglow )
-            //
             long afterglowTimeDiff = System.currentTimeMillis() - lastAfterglowTimestamp;
             if (afterglowTimeDiff >= maxTimeDiffAfterglow) {
                 this.afterglowUpdatePoints();
                 lastAfterglowTimestamp = System.currentTimeMillis();
             }
 
-            ///
             // Bulk Write (as window frequency)
-            //
             this.upsertBulkToMongoDb();
         }
     }
 
+    /*
+     * (non-Javadoc)
+     * 
+     * @see org.apache.samza.task.StreamTask#process(org.apache.samza.system.IncomingMessageEnvelope,
+     * org.apache.samza.task.MessageCollector, org.apache.samza.task.TaskCoordinator)
+     */
     @Override
     public void process(IncomingMessageEnvelope envelope, MessageCollector collector, TaskCoordinator coordinator) {
         GenericRecord event = (GenericRecord) envelope.getMessage();
@@ -165,16 +192,21 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
 
         // Temp hack: Ignore points not coming from "/"
         if (view.trim().equals("/")) {
-            
+
             // printAllInput(timestamp, xx, xxMax, yy, yyMax);
 
-            // Set count point and count
+            // Set quantized countPoint and count
             checkAndCount(new CountPoint(view, quantize(xx, xNormMax, getOneIfZero(xxMax)),
                     quantize(yy, yNormMax, getOneIfZero(yyMax)), timestamp));
 
         }
     }
 
+    /**
+     * Checks for existing countPoint in the map and counts up its rate.
+     * 
+     * @param countPoint
+     */
     private void checkAndCount(CountPoint countPoint) {
         if (counts.containsKey(countPoint)) {
             int newCount = (int) counts.get(countPoint) + 1;
@@ -190,10 +222,13 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         }
     }
 
+    /**
+     * Upsert points to mongoDb.
+     */
     private void upsertBulkToMongoDb() {
-        if (pointRateMax == 0) {
-            pointRateMax = 1;
-        }
+
+        pointRateMax = getOneIfZero(pointRateMax);
+
         // Prepare upsert blob
         if (!counts.isEmpty()) {
             List<WriteModel<Document>> bulkUpdates = new ArrayList<WriteModel<Document>>();
@@ -203,9 +238,10 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
                 int newCount = (int) counts.get(key);
                 int radius = (newCount * pointRateMaxStatic) / pointRateMax;
                 radius = clipToPointRateMaxStatic(radius);
-                int value = (newCount * pointRateMaxStatic) / pointRateMax;
-                value = clipToPointRateMaxStatic(value);
-                
+                int value = radius;
+                // int value = (newCount * pointRateMaxStatic) / pointRateMax;
+                // value = clipToPointRateMaxStatic(value);
+
                 // Upsert or delete
                 if (radius != 0) {
                     HeatmapPoint hmp = new HeatmapPoint(radius, value, key.xx, key.yy, key.view, key.hashCode());
@@ -232,6 +268,9 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         }
     }
 
+    /**
+     * Afterglow points due tue windowing function.
+     */
     private void afterglowUpdatePoints() {
         System.out.println("afterglowUpdatePoints()");
         long timestampNow = System.currentTimeMillis();
@@ -241,7 +280,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
                 // scale counts, reduce the rate
                 int val = (int) counts.get(cp);
                 int newCount = shrink(val, 3, 0);
-                pointRateMax = shrink(val, 6, 1);
+                pointRateMax = shrink(val, 5, 1);
                 cp.timestamp = timestampNow;
                 counts.put(cp, newCount);
             }
@@ -249,6 +288,9 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
 
     }
 
+    /**
+     * @return Mongo collection object (via string from config file).
+     */
     private MongoCollection<Document> getCollection() {
         if (mongoCollection.isEmpty()) {
             System.out.println("ERROR: Mongocollection name is empty!");
@@ -256,6 +298,10 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         return db.getCollection(this.mongoCollection);
     }
 
+    /**
+     * @param point
+     * @return Document object consisting of point data.
+     */
     private Document getDocFromPoint(HeatmapPoint point) {
         return new Document("point",
                 new Document().append("view", point.view).append("x", point.xx).append("y", point.yy)
@@ -263,29 +309,57 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
                                 point.hashCode);
     }
 
+    /**
+     * @param input
+     * @param scaleFac
+     * @param reduceTo
+     * @return shrinked value as integer.
+     */
     private int shrink(int input, int scaleFac, int reduceTo) {
         int retVal = (input != 1) ? (input - (input / scaleFac)) : reduceTo;
         return (input == 2) ? 1 : retVal;
     }
 
+    /**
+     * @param input
+     * @return input as integer or 1, if input is 0.
+     */
     private int getOneIfZero(int input) {
         return (input == 0) ? 1 : input;
     }
 
+    /**
+     * @param input
+     * @param norm
+     * @param max
+     * @return quantized input value as integer.
+     */
     private int quantize(int input, int norm, int max) {
         return (input * norm) / max;
     }
-    
-    private int clipToPointRateMaxStatic(int input){
+
+    /**
+     * @param input
+     * @return clipped input value as integer.
+     */
+    private int clipToPointRateMaxStatic(int input) {
         return (input > pointRateMaxStatic) ? pointRateMaxStatic : input;
     }
-    
-    private void printAllInput(long timestamp, int xx, int xxMax, int yy, int yyMax){
-         System.out.println("-----------------------------------");
-         System.out.println("timestamp " + timestamp);
-         System.out.println("x " + xx);
-         System.out.println("xMax " + xxMax);
-         System.out.println("y " + yy);
-         System.out.println("yMax " + yyMax);
+
+    /**
+     * Prit out all input values.
+     * @param timestamp
+     * @param xx
+     * @param xxMax
+     * @param yy
+     * @param yyMax
+     */
+    private void printAllInput(long timestamp, int xx, int xxMax, int yy, int yyMax) {
+        System.out.println("-----------------------------------");
+        System.out.println("timestamp " + timestamp);
+        System.out.println("x " + xx);
+        System.out.println("xMax " + xxMax);
+        System.out.println("y " + yy);
+        System.out.println("yMax " + yyMax);
     }
 }
