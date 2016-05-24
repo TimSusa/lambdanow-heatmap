@@ -98,7 +98,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
     private static final String X_NORM_MAX = "task.x.norm.max";
     private static final String Y_NORM_MAX = "task.y.norm.max";
     private static final String POINT_RATE_MAX = "task.point.rate.max";
-    
+
     private String mongoCollection = "";
     private MongoClient mongoClient;
     private MongoDatabase db;
@@ -107,11 +107,12 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
     private int xNormMax;
     private int yNormMax;
     private int pointRateMax;
+    private int pointRateMaxStatic;
     private long firstTimestamp;
     private long lastAfterglowTimestamp;
 
     private Map<CountPoint, Integer> counts = new HashMap<CountPoint, Integer>();
-    
+
     /**
      * init.
      * 
@@ -124,7 +125,8 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         maxTimeDiffAfterglow = Long.valueOf(config.get(AFTERGLOW)).longValue();
         xNormMax = Integer.parseInt(config.get(X_NORM_MAX));
         yNormMax = Integer.parseInt(config.get(Y_NORM_MAX));
-        pointRateMax = Integer.parseInt(config.get(POINT_RATE_MAX));
+        pointRateMax = Integer.parseInt(config.get(POINT_RATE_MAX)); // would be changed
+        pointRateMaxStatic = Integer.parseInt(config.get(POINT_RATE_MAX)); // would never be changed
         firstTimestamp = System.currentTimeMillis();
         lastAfterglowTimestamp = firstTimestamp;
     }
@@ -164,41 +166,57 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         // Temp hack: Ignore points not coming from "/"
         if (view.trim().equals("/")) {
 
-//            System.out.println("-----------------------------------");
-//            System.out.println("timestamp " + timestamp);
-//            System.out.println("x " + xx);
-//            System.out.println("xMax " + xxMax);
-//            System.out.println("y " + yy);
-//            System.out.println("yMax " + yyMax);
+            // System.out.println("-----------------------------------");
+            // System.out.println("timestamp " + timestamp);
+            // System.out.println("x " + xx);
+            // System.out.println("xMax " + xxMax);
+            // System.out.println("y " + yy);
+            // System.out.println("yMax " + yyMax);
 
             // Avoid dividing through zero
-            if (xxMax == 0) {
-                xxMax = 1;
-            }
-            if (yyMax == 0) {
-                yyMax = 1;
-            }
+//            if (xxMax == 0) {
+//                xxMax = 1;
+//            }
+//            if (yyMax == 0) {
+//                yyMax = 1;
+//            }
 
             // Quantize
-            int newXx = (xx * xNormMax) / xxMax;
-            int newYy = (yy * yNormMax) / yyMax;
+            int newXx = (xx * xNormMax) / getOneIfZero(xxMax);
+            int newYy = (yy * yNormMax) / getOneIfZero(yyMax);
 
             // Set count point
-            CountPoint countPoint = new CountPoint(view, newXx, newYy, timestamp);
+            // CountPoint countPoint = new CountPoint(view, newXx, newYy, timestamp);
 
-            // Count
-            if (counts.containsKey(countPoint)) {
-                int newCount = (int) counts.get(countPoint) + 1;
-                counts.put(countPoint, newCount);
+            // Set count point and Count
+            checkAndCount(new CountPoint(view, newXx, newYy, timestamp));
+            // if (counts.containsKey(countPoint)) {
+            // int newCount = (int) counts.get(countPoint) + 1;
+            // counts.put(countPoint, newCount);
+            //
+            // // Set local maximum
+            // if (pointRateMax < newCount) {
+            // pointRateMax = newCount;
+            // }
+            //
+            // } else {
+            // counts.put(countPoint, 1);
+            // }
+        }
+    }
 
-                // Set local maximum
-                if (pointRateMax < newCount) {
-                    pointRateMax = newCount;
-                }
+    private void checkAndCount(CountPoint countPoint) {
+        if (counts.containsKey(countPoint)) {
+            int newCount = (int) counts.get(countPoint) + 1;
+            counts.put(countPoint, newCount);
 
-            } else {
-                counts.put(countPoint, 1);
+            // Set local maximum
+            if (pointRateMax < newCount) {
+                pointRateMax = newCount;
             }
+
+        } else {
+            counts.put(countPoint, 1);
         }
     }
 
@@ -213,20 +231,20 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
 
             for (CountPoint key : counts.keySet()) {
                 int newCount = (int) counts.get(key);
-                int radius = (newCount * 100) / pointRateMax;
-                
+                int radius = (newCount * pointRateMaxStatic) / pointRateMax;
+
                 // clip
-                if (radius > 100){
-                    radius = 100;
+                if (radius > pointRateMaxStatic) {
+                    radius = pointRateMaxStatic;
                 }
-                
-                int value = (newCount * 100) / pointRateMax;
-                if (value > 100){
-                    value = 100;
+
+                int value = (newCount * pointRateMaxStatic) / pointRateMax;
+                if (value > pointRateMaxStatic) {
+                    value = pointRateMaxStatic;
                 }
                 // Upsert or delete
                 if (radius != 0) {
-                    HeatmapPoint hmp = new HeatmapPoint(radius, value, key.xx, key.yy, key.view,key.hashCode());
+                    HeatmapPoint hmp = new HeatmapPoint(radius, value, key.xx, key.yy, key.view, key.hashCode());
                     bulkUpdates.add(new UpdateOneModel<Document>(new Document("_id", key.hashCode()),
                             new Document("$set", getDocFromPoint(hmp)), new UpdateOptions().upsert(true)));
                 } else {
@@ -258,8 +276,13 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
             if (timeDiff >= maxTimeDiffAfterglow) {
                 // scale counts, reduce the rate
                 int val = (int) counts.get(cp);
-                int newCount = (val != 1) ? (val - (val / 3)) : 0;
-                newCount = (val == 2) ? 1 : newCount;
+                int newCount = shrink(val, 3, 0);
+                // int newCount = (val != 1) ? (val - (val / 3)) : 0;
+                // newCount = (val == 2) ? 1 : newCount;
+                // scale local maximum
+                // pointRateMax = (val != 1) ? (val - (val / 6)) : 1;
+                // pointRateMax =(val == 2) ? 1 : pointRateMax;
+                pointRateMax = shrink(val, 6, 1);
                 cp.timestamp = timestampNow;
                 counts.put(cp, newCount);
             }
@@ -279,5 +302,14 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
                 new Document().append("view", point.view).append("x", point.xx).append("y", point.yy)
                         .append("radius", point.radius).append("weight", point.value)).append("hashCode",
                                 point.hashCode);
+    }
+
+    private int shrink(int input, int scaleFac, int reduceTo) {
+        int retVal = (input != 1) ? (input - (input / scaleFac)) : reduceTo;
+        return (input == 2) ? 1 : retVal;
+    }
+    
+    private int getOneIfZero ( int input) {
+        return (input == 0) ? 1 : input;
     }
 }
