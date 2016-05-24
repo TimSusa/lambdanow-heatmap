@@ -165,43 +165,13 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
 
         // Temp hack: Ignore points not coming from "/"
         if (view.trim().equals("/")) {
+            
+            // printAllInput(timestamp, xx, xxMax, yy, yyMax);
 
-            // System.out.println("-----------------------------------");
-            // System.out.println("timestamp " + timestamp);
-            // System.out.println("x " + xx);
-            // System.out.println("xMax " + xxMax);
-            // System.out.println("y " + yy);
-            // System.out.println("yMax " + yyMax);
+            // Set count point and count
+            checkAndCount(new CountPoint(view, quantize(xx, xNormMax, getOneIfZero(xxMax)),
+                    quantize(yy, yNormMax, getOneIfZero(yyMax)), timestamp));
 
-            // Avoid dividing through zero
-//            if (xxMax == 0) {
-//                xxMax = 1;
-//            }
-//            if (yyMax == 0) {
-//                yyMax = 1;
-//            }
-
-            // Quantize
-            int newXx = (xx * xNormMax) / getOneIfZero(xxMax);
-            int newYy = (yy * yNormMax) / getOneIfZero(yyMax);
-
-            // Set count point
-            // CountPoint countPoint = new CountPoint(view, newXx, newYy, timestamp);
-
-            // Set count point and Count
-            checkAndCount(new CountPoint(view, newXx, newYy, timestamp));
-            // if (counts.containsKey(countPoint)) {
-            // int newCount = (int) counts.get(countPoint) + 1;
-            // counts.put(countPoint, newCount);
-            //
-            // // Set local maximum
-            // if (pointRateMax < newCount) {
-            // pointRateMax = newCount;
-            // }
-            //
-            // } else {
-            // counts.put(countPoint, 1);
-            // }
         }
     }
 
@@ -232,16 +202,10 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
             for (CountPoint key : counts.keySet()) {
                 int newCount = (int) counts.get(key);
                 int radius = (newCount * pointRateMaxStatic) / pointRateMax;
-
-                // clip
-                if (radius > pointRateMaxStatic) {
-                    radius = pointRateMaxStatic;
-                }
-
+                radius = clipToPointRateMaxStatic(radius);
                 int value = (newCount * pointRateMaxStatic) / pointRateMax;
-                if (value > pointRateMaxStatic) {
-                    value = pointRateMaxStatic;
-                }
+                value = clipToPointRateMaxStatic(value);
+                
                 // Upsert or delete
                 if (radius != 0) {
                     HeatmapPoint hmp = new HeatmapPoint(radius, value, key.xx, key.yy, key.view, key.hashCode());
@@ -277,11 +241,6 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
                 // scale counts, reduce the rate
                 int val = (int) counts.get(cp);
                 int newCount = shrink(val, 3, 0);
-                // int newCount = (val != 1) ? (val - (val / 3)) : 0;
-                // newCount = (val == 2) ? 1 : newCount;
-                // scale local maximum
-                // pointRateMax = (val != 1) ? (val - (val / 6)) : 1;
-                // pointRateMax =(val == 2) ? 1 : pointRateMax;
                 pointRateMax = shrink(val, 6, 1);
                 cp.timestamp = timestampNow;
                 counts.put(cp, newCount);
@@ -308,8 +267,25 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         int retVal = (input != 1) ? (input - (input / scaleFac)) : reduceTo;
         return (input == 2) ? 1 : retVal;
     }
-    
-    private int getOneIfZero ( int input) {
+
+    private int getOneIfZero(int input) {
         return (input == 0) ? 1 : input;
+    }
+
+    private int quantize(int input, int norm, int max) {
+        return (input * norm) / max;
+    }
+    
+    private int clipToPointRateMaxStatic(int input){
+        return (input > pointRateMaxStatic) ? pointRateMaxStatic : input;
+    }
+    
+    private void printAllInput(long timestamp, int xx, int xxMax, int yy, int yyMax){
+         System.out.println("-----------------------------------");
+         System.out.println("timestamp " + timestamp);
+         System.out.println("x " + xx);
+         System.out.println("xMax " + xxMax);
+         System.out.println("y " + yy);
+         System.out.println("yMax " + yyMax);
     }
 }
