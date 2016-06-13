@@ -160,8 +160,8 @@ under the License.
         </dependency>
         <dependency>
             <groupId>com.lambdanow</groupId>
-            <artifactId>avro</artifactId>
-            <version>0.1.0</version>
+            <artifactId>avro-serde</artifactId>
+            <version>0.0.2-SNAPSHOT</version>
         </dependency>
     </dependencies>
 
