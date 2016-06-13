@@ -122,7 +122,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
     private long maxTimeDiffAfterglow;
     private int xNormMax;
     private int yNormMax;
-    private int pointRateMax;
+    private int maxCount;
     private int pointRateMaxStatic;
     private long firstTimestamp;
     private long lastAfterglowTimestamp;
@@ -144,7 +144,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         maxTimeDiffAfterglow = Long.valueOf(config.get(AFTERGLOW)).longValue();
         xNormMax = Integer.parseInt(config.get(X_NORM_MAX));
         yNormMax = Integer.parseInt(config.get(Y_NORM_MAX));
-        pointRateMax = Integer.parseInt(config.get(POINT_RATE_MAX)); // would be changed
+        maxCount = Integer.parseInt(config.get(POINT_RATE_MAX)); // would be changed
         pointRateMaxStatic = Integer.parseInt(config.get(POINT_RATE_MAX)); // would never be changed
         firstTimestamp = System.currentTimeMillis();
         lastAfterglowTimestamp = firstTimestamp;
@@ -213,8 +213,8 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
             counts.put(countPoint, newCount);
 
             // Set local maximum
-            if (pointRateMax < newCount) {
-                pointRateMax = newCount;
+            if (maxCount < newCount) {
+                maxCount = newCount;
             }
 
         } else {
@@ -227,20 +227,16 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
      */
     private void upsertBulkToMongoDb() {
 
-        pointRateMax = getOneIfZero(pointRateMax);
-
-        // Prepare upsert blob
+        // Prepare upsert
         if (!counts.isEmpty()) {
             List<WriteModel<Document>> bulkUpdates = new ArrayList<WriteModel<Document>>();
             List<WriteModel<Document>> bulkDeletes = new ArrayList<WriteModel<Document>>();
 
             for (CountPoint key : counts.keySet()) {
                 int newCount = (int) counts.get(key);
-                int radius = (newCount * pointRateMaxStatic) / pointRateMax;
-                radius = clipToPointRateMaxStatic(radius);
-                int value = radius;
-                // int value = (newCount * pointRateMaxStatic) / pointRateMax;
-                // value = clipToPointRateMaxStatic(value);
+                int radius = (newCount * pointRateMaxStatic) / getOneIfZero(maxCount);
+                radius = clip(radius, 100);
+                int value = clip(radius * 10, 100);
 
                 // Upsert or delete
                 if (radius != 0) {
@@ -252,7 +248,6 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
                 }
             }
 
-            //
             // Bulk Update
             bulkUpdates.addAll(bulkDeletes);
             if (!bulkUpdates.isEmpty()) {
@@ -276,13 +271,15 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         long timestampNow = System.currentTimeMillis();
         for (CountPoint cp : counts.keySet()) {
             long timeDiff = timestampNow - (long) cp.timestamp;
+            int val = (int) counts.get(cp);
             if (timeDiff >= maxTimeDiffAfterglow) {
                 // scale counts, reduce the rate
-                int val = (int) counts.get(cp);
                 int newCount = shrink(val, 3, 0);
-                pointRateMax = shrink(val, 5, 1);
                 cp.timestamp = timestampNow;
                 counts.put(cp, newCount);
+            }
+            if (timeDiff >= (3 * maxTimeDiffAfterglow)) {
+                maxCount = shrink(val, 8, 1);
             }
         }
 
@@ -342,12 +339,13 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
      * @param input
      * @return clipped input value as integer.
      */
-    private int clipToPointRateMaxStatic(int input) {
-        return (input > pointRateMaxStatic) ? pointRateMaxStatic : input;
+    private int clip(int input, int clipVal) {
+        return (input > clipVal) ? clipVal : input;
     }
 
     /**
      * Prit out all input values.
+     * 
      * @param timestamp
      * @param xx
      * @param xxMax
