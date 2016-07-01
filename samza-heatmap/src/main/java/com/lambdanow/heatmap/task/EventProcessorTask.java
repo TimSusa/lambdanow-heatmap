@@ -1,11 +1,15 @@
 package com.lambdanow.heatmap.task;
 
 import java.util.ArrayList;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import javax.xml.bind.DatatypeConverter;
+
 import org.apache.avro.generic.GenericRecord;
+import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.builder.EqualsBuilder;
 import org.apache.commons.lang.builder.HashCodeBuilder;
 import org.apache.samza.config.Config;
@@ -27,6 +31,15 @@ import com.mongodb.client.model.UpdateOneModel;
 import com.mongodb.client.model.UpdateOptions;
 import com.mongodb.client.model.WriteModel;
 
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtBuilder;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.MalformedJwtException;
+import io.jsonwebtoken.SignatureAlgorithm;
+import io.jsonwebtoken.SignatureException;
+import io.jsonwebtoken.UnsupportedJwtException;
+
 /**
  * Class HeatmapPoint.
  * 
@@ -47,13 +60,16 @@ final class HeatmapPoint {
 
     public int hashCode;
 
-    public HeatmapPoint(int radius, int value, int xx, int yy, String view, int hashCode) {
+    public int userId;
+
+    public HeatmapPoint(int radius, int value, int xx, int yy, String view, int hashCode, int userId) {
         this.radius = radius;
         this.value = value;
         this.xx = xx;
         this.yy = yy;
         this.view = view;
         this.hashCode = hashCode;
+        this.userId = userId;
     }
 }
 
@@ -68,19 +84,21 @@ final class CountPoint {
     public int xx;
     public int yy;
     public long timestamp;
+    public int userId;
 
-    public CountPoint(String view, int xx, int yy, long timestamp) {
+    public CountPoint(String view, int xx, int yy, long timestamp, int userId) {
         this.view = view;
         this.xx = xx;
         this.yy = yy;
         this.timestamp = timestamp;
+        this.userId = userId;
     }
 
     @Override
     public int hashCode() {
         return new HashCodeBuilder(17, 31). // two randomly chosen prime numbers
         // if deriving: appendSuper(super.hashCode()).
-                append(view).append(xx).append(yy).toHashCode();
+                append(view).append(xx).append(yy).append(userId).toHashCode();
     }
 
     @Override
@@ -94,7 +112,7 @@ final class CountPoint {
         CountPoint rhs = (CountPoint) obj;
         return new EqualsBuilder()
                 // if deriving: appendSuper(super.equals(obj)).
-                .append(view, rhs.view).append(xx, rhs.xx).append(yy, rhs.yy).isEquals();
+                .append(view, rhs.view).append(xx, rhs.xx).append(yy, rhs.yy).append(userId, rhs.userId).isEquals();
     }
 }
 
@@ -126,8 +144,10 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
     private int pointRateMaxStatic;
     private long firstTimestamp;
     private long lastAfterglowTimestamp;
+    private static final String SECRET_KEY = "d9f9u.e6a??.,./arefowi42"; // This is taken to create the token
 
     private Map<CountPoint, Integer> counts = new HashMap<CountPoint, Integer>();
+    private Map<String, Integer> trackingTokenMap = new HashMap<String, Integer>();
 
     /*
      * (non-Javadoc)
@@ -135,8 +155,6 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
      * @see org.apache.samza.task.InitableTask#init(org.apache.samza.config.Config, org.apache.samza.task.TaskContext)
      */
     public void init(Config config, TaskContext context) {
-        System.out.println("Init");
-
         mongoCollection = config.get(MONGO_COLLECTION);
         mongoClient = new MongoClient(config.get(MONGO_HOST), Integer.parseInt(config.get(MONGO_PORT)));
         db = mongoClient.getDatabase(config.get(MONGO_DB_NAME));
@@ -148,6 +166,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         pointRateMaxStatic = Integer.parseInt(config.get(POINT_RATE_MAX)); // would never be changed
         firstTimestamp = System.currentTimeMillis();
         lastAfterglowTimestamp = firstTimestamp;
+        System.out.println("Init OK");
     }
 
     /*
@@ -190,14 +209,19 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         int yy = (int) event.get("y");
         int yyMax = (int) event.get("yMax");
 
+        String userIdString = event.get("userId").toString();
+        int userId = getUserIdByToken(userIdString);
+
+        printAllInput(timestamp, xx, xxMax, yy, yyMax, userId);
+        
         // Temp hack: Ignore points not coming from "/"
         if (view.trim().equals("/")) {
 
-            // printAllInput(timestamp, xx, xxMax, yy, yyMax);
+
 
             // Set quantized countPoint and count
             checkAndCount(new CountPoint(view, quantize(xx, xNormMax, getOneIfZero(xxMax)),
-                    quantize(yy, yNormMax, getOneIfZero(yyMax)), timestamp));
+                    quantize(yy, yNormMax, getOneIfZero(yyMax)), timestamp, userId));
 
         }
     }
@@ -240,7 +264,8 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
 
                 // Upsert or delete
                 if (radius != 0) {
-                    HeatmapPoint hmp = new HeatmapPoint(radius, value, key.xx, key.yy, key.view, key.hashCode());
+                    HeatmapPoint hmp = new HeatmapPoint(radius, value, key.xx, key.yy, key.view, key.hashCode(),
+                            key.userId);
                     bulkUpdates.add(new UpdateOneModel<Document>(new Document("_id", key.hashCode()),
                             new Document("$set", getDocFromPoint(hmp)), new UpdateOptions().upsert(true)));
                 } else {
@@ -302,8 +327,8 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
     private Document getDocFromPoint(HeatmapPoint point) {
         return new Document("point",
                 new Document().append("view", point.view).append("x", point.xx).append("y", point.yy)
-                        .append("radius", point.radius).append("weight", point.value)).append("hashCode",
-                                point.hashCode);
+                        .append("radius", point.radius).append("weight", point.value))
+                                .append("hashCode", point.hashCode).append("userId", point.userId);
     }
 
     /**
@@ -344,6 +369,60 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
     }
 
     /**
+     * Method to validate and read out the JWT. Decrypts and extracts userinfo.
+     * 
+     * @param jwt
+     *            Token as String
+     * @return userId
+     */
+    public Integer getUserIdByToken(String jwt) {
+        
+        System.out.println("getUserIdByToken(): " + jwt);
+
+        Integer retVal = -1000;
+
+        if (trackingTokenMap.containsKey(jwt)) {
+            retVal = trackingTokenMap.get(jwt);
+        } else {
+            try {
+
+                Claims claims = Jwts.parser().setSigningKey(DatatypeConverter.parseBase64Binary(SECRET_KEY))
+                        .parseClaimsJws(jwt).getBody();
+
+                // OK, we can trust this JWT
+                System.out.println("getUserIdByToken(): OK, we can trust this JWT");
+
+                System.out.println("getUserIdByToken(): ID = " + claims.getId());
+                System.out.println("getUserIdByToken(): Subject = " + claims.getSubject());
+                System.out.println("getUserIdByToken(): Issuer = " + claims.getIssuer());
+                System.out.println("getUserIdByToken(): Expiration = " + claims.getExpiration());
+                
+                
+                if (StringUtils.isNumeric(claims.getId())) {
+                    retVal = Integer.parseInt(claims.getId());
+                }
+                
+                // this.trackingTokenMap.put(jwt, retVal);
+                
+            } catch (SignatureException e) {
+                // don't trust the JWT!
+                System.out.println("getUserIdByToken(): claimsJws JWS signature validation fail");
+            } catch (UnsupportedJwtException e) {
+                System.out.println("getUserIdByToken(): claimsJws argument does not represent an Claims JWS");
+            } catch (MalformedJwtException e) {
+                System.out.println("getUserIdByToken(): claimsJws string is not a valid JWS");
+            } catch (ExpiredJwtException e) {
+                System.out.println("getUserIdByToken(): Claims has an expiration time before the time this method is invoked");
+            } catch (IllegalArgumentException e) {
+                System.out.println("getUserIdByToken(): IllegalArgumentException");
+            }
+        }
+        
+        return retVal;
+    }
+    
+
+    /**
      * Prit out all input values.
      * 
      * @param timestamp
@@ -352,12 +431,13 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
      * @param yy
      * @param yyMax
      */
-    private void printAllInput(long timestamp, int xx, int xxMax, int yy, int yyMax) {
+    private void printAllInput(long timestamp, int xx, int xxMax, int yy, int yyMax, int userId) {
         System.out.println("-----------------------------------");
         System.out.println("timestamp " + timestamp);
         System.out.println("x " + xx);
         System.out.println("xMax " + xxMax);
         System.out.println("y " + yy);
         System.out.println("yMax " + yyMax);
+        System.out.println("userId " + userId);
     }
 }
