@@ -143,7 +143,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
     private long lastAfterglowTimestamp;
     private static final String SECRET_KEY = "d9f9u.e6a??.,./arefowi42"; // This is taken to create the token
 
-    private Map<String, Integer> trackingTokenMap = new HashMap<String, Integer>();
+    private Map<String, Integer> trackingTokenMap;
     private HashMap<Integer, HashMap<CountPoint, Integer>> userCounts;
 
     /*
@@ -152,7 +152,8 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
      * @see org.apache.samza.task.InitableTask#init(org.apache.samza.config.Config, org.apache.samza.task.TaskContext)
      */
     public void init(Config config, TaskContext context) {
-
+        
+        trackingTokenMap = new HashMap<String, Integer>();
         userCounts = new HashMap<Integer, HashMap<CountPoint, Integer>>();
 
         mongoCollection = config.get(MONGO_COLLECTION);
