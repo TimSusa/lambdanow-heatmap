@@ -1,7 +1,6 @@
 package com.lambdanow.heatmap.task;
 
 import java.util.ArrayList;
-
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,10 +32,8 @@ import com.mongodb.client.model.WriteModel;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
-import io.jsonwebtoken.JwtBuilder;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.MalformedJwtException;
-import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.SignatureException;
 import io.jsonwebtoken.UnsupportedJwtException;
 
@@ -138,16 +135,16 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
     private MongoDatabase db;
 
     private long maxTimeDiffAfterglow;
-    private int xNormMax;
-    private int yNormMax;
+    private int xxNormMax;
+    private int yyNormMax;
     private int maxCount;
     private int pointRateMaxStatic;
     private long firstTimestamp;
     private long lastAfterglowTimestamp;
     private static final String SECRET_KEY = "d9f9u.e6a??.,./arefowi42"; // This is taken to create the token
 
-    private Map<CountPoint, Integer> counts = new HashMap<CountPoint, Integer>();
     private Map<String, Integer> trackingTokenMap = new HashMap<String, Integer>();
+    private HashMap<Integer, HashMap<CountPoint, Integer>> userCounts;
 
     /*
      * (non-Javadoc)
@@ -155,13 +152,16 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
      * @see org.apache.samza.task.InitableTask#init(org.apache.samza.config.Config, org.apache.samza.task.TaskContext)
      */
     public void init(Config config, TaskContext context) {
+
+        userCounts = new HashMap<Integer, HashMap<CountPoint, Integer>>();
+
         mongoCollection = config.get(MONGO_COLLECTION);
         mongoClient = new MongoClient(config.get(MONGO_HOST), Integer.parseInt(config.get(MONGO_PORT)));
         db = mongoClient.getDatabase(config.get(MONGO_DB_NAME));
 
         maxTimeDiffAfterglow = Long.valueOf(config.get(AFTERGLOW)).longValue();
-        xNormMax = Integer.parseInt(config.get(X_NORM_MAX));
-        yNormMax = Integer.parseInt(config.get(Y_NORM_MAX));
+        xxNormMax = Integer.parseInt(config.get(X_NORM_MAX));
+        yyNormMax = Integer.parseInt(config.get(Y_NORM_MAX));
         maxCount = Integer.parseInt(config.get(POINT_RATE_MAX)); // would be changed
         pointRateMaxStatic = Integer.parseInt(config.get(POINT_RATE_MAX)); // would never be changed
         firstTimestamp = System.currentTimeMillis();
@@ -178,7 +178,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
     @Override
     public void window(MessageCollector collector, TaskCoordinator coordinator) {
 
-        if (!counts.isEmpty()) {
+        if (!userCounts.isEmpty()) {
 
             // "Afterglow": ( as maxTimeDiffAfterglow )
             long afterglowTimeDiff = System.currentTimeMillis() - lastAfterglowTimestamp;
@@ -213,15 +213,13 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
         int userId = getUserIdByToken(userIdString);
 
         printAllInput(timestamp, xx, xxMax, yy, yyMax, userId);
-        
+
         // Temp hack: Ignore points not coming from "/"
         if (view.trim().equals("/")) {
 
-
-
             // Set quantized countPoint and count
-            checkAndCount(new CountPoint(view, quantize(xx, xNormMax, getOneIfZero(xxMax)),
-                    quantize(yy, yNormMax, getOneIfZero(yyMax)), timestamp, userId));
+            checkAndCount(new CountPoint(view, quantize(xx, xxNormMax, getOneIfZero(xxMax)),
+                    quantize(yy, yyNormMax, getOneIfZero(yyMax)), timestamp, userId));
 
         }
     }
@@ -230,20 +228,42 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
      * Checks for existing countPoint in the map and counts up its rate.
      * 
      * @param countPoint
+     *            countPoint
      */
     private void checkAndCount(CountPoint countPoint) {
-        if (counts.containsKey(countPoint)) {
-            int newCount = (int) counts.get(countPoint) + 1;
-            counts.put(countPoint, newCount);
 
-            // Set local maximum
-            if (maxCount < newCount) {
-                maxCount = newCount;
+        // get user id
+        Integer userId = countPoint.userId;
+
+        // counts = null;
+        HashMap<CountPoint, Integer> localCounts = new HashMap<CountPoint, Integer>();
+
+        // check if entries for userId already exist, create if necessary
+        if (userCounts.containsKey(userId)) {
+
+            // get userId specific heatmap
+            localCounts = userCounts.get(userId);
+
+            // increase the countpoint
+            if (localCounts.containsKey(countPoint)) {
+                int newCount = (int) localCounts.get(countPoint) + 1;
+                localCounts.put(countPoint, newCount);
+
+                // Set local maximum
+                if (maxCount < newCount) {
+                    maxCount = newCount;
+                }
+
+            } else {
+                localCounts.put(countPoint, 1);
             }
 
         } else {
-            counts.put(countPoint, 1);
+            localCounts.put(countPoint, 1);
         }
+
+        // Stuff count into userCounts
+        userCounts.put(userId, localCounts);
     }
 
     /**
@@ -252,24 +272,32 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
     private void upsertBulkToMongoDb() {
 
         // Prepare upsert
-        if (!counts.isEmpty()) {
+        if (!userCounts.isEmpty()) {
             List<WriteModel<Document>> bulkUpdates = new ArrayList<WriteModel<Document>>();
             List<WriteModel<Document>> bulkDeletes = new ArrayList<WriteModel<Document>>();
 
-            for (CountPoint key : counts.keySet()) {
-                int newCount = (int) counts.get(key);
-                int radius = (newCount * pointRateMaxStatic) / getOneIfZero(maxCount);
-                radius = clip(radius, 100);
-                int value = clip(radius * 10, 100);
+            HashMap<CountPoint, Integer> localCounts = new HashMap<CountPoint, Integer>();
 
-                // Upsert or delete
-                if (radius != 0) {
-                    HeatmapPoint hmp = new HeatmapPoint(radius, value, key.xx, key.yy, key.view, key.hashCode(),
-                            key.userId);
-                    bulkUpdates.add(new UpdateOneModel<Document>(new Document("_id", key.hashCode()),
-                            new Document("$set", getDocFromPoint(hmp)), new UpdateOptions().upsert(true)));
-                } else {
-                    bulkDeletes.add(new DeleteManyModel<Document>(new Document("_id", key.hashCode())));
+            // Iterate through userIds
+            for (Integer userIdKey : userCounts.keySet()) {
+                localCounts = userCounts.get(userIdKey);
+
+                // Iterate through counts
+                for (CountPoint key : localCounts.keySet()) {
+                    int newCount = (int) localCounts.get(key);
+                    int radius = (newCount * pointRateMaxStatic) / getOneIfZero(maxCount);
+                    radius = clip(radius, 100);
+                    int value = clip(radius * 10, 100);
+
+                    // Upsert or delete
+                    if (radius != 0) {
+                        HeatmapPoint hmp = new HeatmapPoint(radius, value, key.xx, key.yy, key.view, key.hashCode(),
+                                key.userId);
+                        bulkUpdates.add(new UpdateOneModel<Document>(new Document("_id", key.hashCode()),
+                                new Document("$set", getDocFromPoint(hmp)), new UpdateOptions().upsert(true)));
+                    } else {
+                        bulkDeletes.add(new DeleteManyModel<Document>(new Document("_id", key.hashCode())));
+                    }
                 }
             }
 
@@ -293,19 +321,33 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
      */
     private void afterglowUpdatePoints() {
         System.out.println("afterglowUpdatePoints()");
-        long timestampNow = System.currentTimeMillis();
-        for (CountPoint cp : counts.keySet()) {
-            long timeDiff = timestampNow - (long) cp.timestamp;
-            int val = (int) counts.get(cp);
-            if (timeDiff >= maxTimeDiffAfterglow) {
-                // scale counts, reduce the rate
-                int newCount = shrink(val, 3, 0);
-                cp.timestamp = timestampNow;
-                counts.put(cp, newCount);
+
+        HashMap<CountPoint, Integer> localCounts = new HashMap<CountPoint, Integer>();
+
+        // Iterate through userIds
+        for (Integer userIdKey : userCounts.keySet()) {
+            localCounts = userCounts.get(userIdKey);
+
+            long timestampNow = System.currentTimeMillis();
+
+            // Iterate through counts
+            for (CountPoint cp : localCounts.keySet()) {
+                long timeDiff = timestampNow - (long) cp.timestamp;
+                int val = (int) localCounts.get(cp);
+                if (timeDiff >= maxTimeDiffAfterglow) {
+                    // scale counts, reduce the rate
+                    int newCount = shrink(val, 3, 0);
+                    cp.timestamp = timestampNow;
+                    localCounts.put(cp, newCount);
+                }
+
+                if (timeDiff >= (3 * maxTimeDiffAfterglow)) {
+                    maxCount = shrink(val, 8, 1);
+                }
             }
-            if (timeDiff >= (3 * maxTimeDiffAfterglow)) {
-                maxCount = shrink(val, 8, 1);
-            }
+
+            // Stuff counts back to userCounts
+            userCounts.put(userIdKey, localCounts);
         }
 
     }
@@ -322,6 +364,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
 
     /**
      * @param point
+     *            Point
      * @return Document object consisting of point data.
      */
     private Document getDocFromPoint(HeatmapPoint point) {
@@ -333,8 +376,11 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
 
     /**
      * @param input
+     *            input
      * @param scaleFac
+     *            scaleFac
      * @param reduceTo
+     *            reduceTo
      * @return shrinked value as integer.
      */
     private int shrink(int input, int scaleFac, int reduceTo) {
@@ -344,6 +390,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
 
     /**
      * @param input
+     *            inptu
      * @return input as integer or 1, if input is 0.
      */
     private int getOneIfZero(int input) {
@@ -352,8 +399,11 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
 
     /**
      * @param input
+     *            input
      * @param norm
+     *            norm
      * @param max
+     *            max
      * @return quantized input value as integer.
      */
     private int quantize(int input, int norm, int max) {
@@ -362,6 +412,7 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
 
     /**
      * @param input
+     *            inptu
      * @return clipped input value as integer.
      */
     private int clip(int input, int clipVal) {
@@ -376,14 +427,17 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
      * @return userId
      */
     public Integer getUserIdByToken(String jwt) {
-        
+
         System.out.println("getUserIdByToken(): " + jwt);
 
         Integer retVal = -1000;
 
+        // Check if token be found in the local map.
         if (trackingTokenMap.containsKey(jwt)) {
             retVal = trackingTokenMap.get(jwt);
         } else {
+            
+            // Check the token itself, otherwise (cost intensive).
             try {
 
                 Claims claims = Jwts.parser().setSigningKey(DatatypeConverter.parseBase64Binary(SECRET_KEY))
@@ -396,14 +450,14 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
                 System.out.println("getUserIdByToken(): Subject = " + claims.getSubject());
                 System.out.println("getUserIdByToken(): Issuer = " + claims.getIssuer());
                 System.out.println("getUserIdByToken(): Expiration = " + claims.getExpiration());
-                
-                
+
                 if (StringUtils.isNumeric(claims.getId())) {
                     retVal = Integer.parseInt(claims.getId());
                 }
-                
-                // this.trackingTokenMap.put(jwt, retVal);
-                
+
+                // Stuff value back, to support map lookup for the next cycle
+                this.trackingTokenMap.put(jwt, retVal);
+
             } catch (SignatureException e) {
                 // don't trust the JWT!
                 System.out.println("getUserIdByToken(): claimsJws JWS signature validation fail");
@@ -412,24 +466,28 @@ public class EventProcessorTask implements StreamTask, InitableTask, WindowableT
             } catch (MalformedJwtException e) {
                 System.out.println("getUserIdByToken(): claimsJws string is not a valid JWS");
             } catch (ExpiredJwtException e) {
-                System.out.println("getUserIdByToken(): Claims has an expiration time before the time this method is invoked");
+                System.out.println("getUserIdByToken(): Claims has an expiration time before this method is invoked");
             } catch (IllegalArgumentException e) {
                 System.out.println("getUserIdByToken(): IllegalArgumentException");
             }
         }
-        
+
         return retVal;
     }
-    
 
     /**
-     * Prit out all input values.
+     * Print out all input values.
      * 
      * @param timestamp
+     *            timestamp
      * @param xx
+     *            xx
      * @param xxMax
+     *            xxMax
      * @param yy
+     *            yy
      * @param yyMax
+     *            yyMax
      */
     private void printAllInput(long timestamp, int xx, int xxMax, int yy, int yyMax, int userId) {
         System.out.println("-----------------------------------");
